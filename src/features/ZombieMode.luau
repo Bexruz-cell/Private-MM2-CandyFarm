@@ -155,11 +155,7 @@ local function EngageThreat(threat: ThreatTarget)
             task.wait(0.05)
         end
 
-        -- 2. Physical Character & Camera Orientation
-        local lookDir = (threat.RootPart.Position - localHrp.Position)
-        local flatLook = Vector3.new(lookDir.X, 0, lookDir.Z).Unit
-        localHrp.CFrame = CFrame.lookAlong(localHrp.Position, flatLook, Vector3.yAxis)
-
+        -- 2. Camera Orientation towards threat (No character CFrame mutation)
         local camera = Workspace.CurrentCamera
         if camera then
             camera.CFrame = CFrame.lookAt(camera.CFrame.Position, threat.RootPart.Position)
@@ -174,17 +170,9 @@ local function EngageThreat(threat: ThreatTarget)
 
         ZombieMode.StatusMessage = string.format("Защита: Стрельба по зомби (%d м)", math.floor(threat.Distance))
     else
-        -- Unarmed Defense: Relocate away from threat
+        -- Unarmed Defense: Telemetry warning only (Zero-Interference Contract: no physics manipulation)
         if threat.Distance <= ZombieMode.EvasionBuffer then
-            local fleeDir = (localHrp.Position - threat.RootPart.Position).Unit
-            local targetEvade = localHrp.Position + (fleeDir * 16.0)
-            if MapManager.IsPositionInsideMap(targetEvade) then
-                localHrp.CFrame = CFrame.new(targetEvade)
-                localHrp.AssemblyLinearVelocity = Vector3.zero
-            else
-                MapManager.ParkInSafeSpot(char)
-            end
-            ZombieMode.StatusMessage = "Уклонение от зомби! Переход в укрытие"
+            ZombieMode.StatusMessage = string.format("Внимание: приближение зомби (%d м)!", math.floor(threat.Distance))
         end
     end
 end

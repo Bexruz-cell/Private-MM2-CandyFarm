@@ -228,21 +228,8 @@ function MapManager.RecordLobbyWaypoint()
 end
 
 function MapManager.ParkInSafeSpot(character: Model?): boolean
-    local char = character or LocalPlayer.Character
-    if not char then return false end
-    local hrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?
-    if not hrp then return false end
-
-    local safePos = MapManager.GetSafeMapPosition()
-    if safePos then
-        hrp.CFrame = CFrame.new(safePos)
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        return true
-    elseif MapManager.LobbyWaypoint then
-        hrp.CFrame = MapManager.LobbyWaypoint
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        return true
-    end
+    -- Zero-Interference Contract: The Companion strictly never modifies character CFrame,
+    -- never teleports the player, and never zeros or alters AssemblyLinearVelocity.
     return false
 end
 
@@ -257,7 +244,8 @@ function MapManager.EnsureSafePlatform(): BasePart
 end
 
 function MapManager.TeleportToSafePlatform(): boolean
-    return MapManager.ParkInSafeSpot()
+    -- Zero-Interference Contract: The Companion strictly never teleports the player
+    return false
 end
 
 function MapManager.RemoveSafePlatform()

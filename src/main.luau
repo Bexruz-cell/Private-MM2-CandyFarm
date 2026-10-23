@@ -1,6 +1,6 @@
 --!strict
--- main.luau: Private MM2 Candy Farm Entry Point (NEBULA PRO + MIDNIGHT + ZOMBIE Architecture)
--- Integrates all sub-modules with top-level error handling and visible screen diagnostics
+-- main.luau: Private MM2 Candy Farm & RockHub Mobile Companion Entry Point
+-- NEBULA PRO + MIDNIGHT Interface, Android Delta Optimization, Non-Intrusive RockHub Resizer
 
 -- 1. Wait for game engine and client player to fully load
 if not game:IsLoaded() then
@@ -29,6 +29,8 @@ local success, initError = pcall(function()
     local Performance = require(script.core.Performance)
     local Persistence = require(script.core.Persistence)
     local FarmEngine = require(script.core.FarmEngine)
+    local RockHubResizer = require(script.core.RockHubResizer)
+    local CompanionTelemetry = require(script.core.CompanionTelemetry)
     local ZombieMode = require(script.features.ZombieMode)
     local MobileUI = require(script.ui.MobileUI)
 
@@ -37,20 +39,40 @@ local success, initError = pcall(function()
         pcall(_G.PrivateMM2CandyFarmCleanup)
         _G.PrivateMM2CandyFarmCleanup = nil
     end
+    if _G.PrivateMM2CompanionCleanup then
+        pcall(_G.PrivateMM2CompanionCleanup)
+        _G.PrivateMM2CompanionCleanup = nil
+    end
+
+    -- Zero-Interference Contract: The Companion strictly never alters character physics,
+    -- never deletes body movers or constraints, and never changes Humanoid states or velocities.
 
     local UI = nil
 
     local function HandleUnload()
         FarmEngine.Destroy()
         ZombieMode.Stop()
+        if RockHubResizer and RockHubResizer.Detach then
+            pcall(function() RockHubResizer:Detach() end)
+        end
+        if CompanionTelemetry and CompanionTelemetry.CleanupAll then
+            pcall(CompanionTelemetry.CleanupAll)
+        end
+        local perf = Performance.GetInstance()
+        if perf and perf.RestoreAll then
+            pcall(function() perf:RestoreAll() end)
+        end
         if UI then
             UI:Destroy()
             UI = nil
         end
         _G.PrivateMM2CandyFarmCleanup = nil
+        _G.PrivateMM2CompanionCleanup = nil
+        print("[Private MM2 Candy Farm] Companion unloaded cleanly.")
     end
 
     _G.PrivateMM2CandyFarmCleanup = HandleUnload
+    _G.PrivateMM2CompanionCleanup = HandleUnload
 
     local function ResolveSpeed(mode: string): number
         if mode == "Обычная" or mode == "Normal" then
@@ -73,7 +95,7 @@ local success, initError = pcall(function()
             end
         end,
 
-        OnToggleZombie = function(enabled: boolean)
+        OnZombieAutoDefendChanged = function(enabled: boolean)
             if enabled then
                 ZombieMode.Start()
             else
@@ -85,6 +107,27 @@ local success, initError = pcall(function()
             local speed = ResolveSpeed(mode)
             State.SetConfig("MoveSpeed", speed)
             State.SetConfig("MoveMethod", "Continuous")
+            Persistence.Save(State.Config)
+        end,
+
+        OnNoclipChanged = function(enabled: boolean)
+            State.SetConfig("Noclip", enabled)
+            Movement.SetNoclip(enabled)
+            Persistence.Save(State.Config)
+        end,
+
+        OnHighFPSChanged = function(enabled: boolean)
+            local perf = Performance.GetInstance()
+            perf:SetEnabled(enabled)
+        end,
+
+        OnAntiAFKChanged = function(enabled: boolean)
+            State.SetConfig("AntiAFK", enabled)
+            if enabled then
+                AntiAFK.Enable()
+            else
+                AntiAFK.Disable()
+            end
             Persistence.Save(State.Config)
         end,
 
@@ -102,20 +145,6 @@ local success, initError = pcall(function()
         OnAutoResumeChanged = function(enabled: boolean)
             State.SetConfig("AutoResumeOnRespawn", enabled)
             Persistence.Save(State.Config)
-        end,
-
-        OnAntiAFKChanged = function(enabled: boolean)
-            State.SetConfig("AntiAFK", enabled)
-            if enabled then
-                AntiAFK.Enable()
-            else
-                AntiAFK.Disable()
-            end
-            Persistence.Save(State.Config)
-        end,
-
-        OnPerfModeChanged = function(enabled: boolean)
-            Performance.SetPerformanceMode(enabled)
         end,
 
         OnResetSettings = function()
@@ -147,14 +176,25 @@ local success, initError = pcall(function()
         end
     end)
 
+    -- Connect High-FPS performance metrics to UI
+    local perfEngine = Performance.GetInstance()
+    perfEngine:StartMetrics(function(perfData)
+        if UI then
+            UI:UpdateMetrics({
+                fps = perfData.FPS,
+                ping = perfData.Ping,
+            })
+        end
+    end)
+
     -- Initialize Zombie Mode with UI metric dispatcher
     ZombieMode.Init(function(data)
-        if UI then
+        if UI and UI.UpdateZombieMetrics then
             UI:UpdateZombieMetrics(data)
         end
     end)
 
-    print("[Private MM2 Candy Farm] Successfully initialized and rendered!")
+    print("[Private MM2 Candy Farm] Successfully initialized RockHub Companion!")
 end)
 
 if not success then

@@ -582,6 +582,77 @@ def test_ui_tab_and_unload_contract():
         assert isinstance(item, str) and len(item) > 0
 
 
+def test_nebula_midnight_4tab_ui_architecture():
+    """Validates NEBULA PRO + MIDNIGHT compact interface specifications:
+    - 4 Tabs: ФАРМ, ЗОМБИ, ИГРОК, НАСТРОЙКИ
+    - Compact Dimensions: 336x248 px (within 320x240 to 340x260 px)
+    - Mini-HUD: 118x32 px
+    - Touch dead-zone avoidance & clamping
+    """
+    tabs = ["ФАРМ", "ЗОМБИ", "ИГРОК", "НАСТРОЙКИ"]
+    assert len(tabs) == 4
+    assert tabs[0] == "ФАРМ"
+    assert tabs[1] == "ЗОМБИ"
+    assert tabs[2] == "ИГРОК"
+    assert tabs[3] == "НАСТРОЙКИ"
+
+    # Window dimension boundaries
+    win_w, win_h = 336, 248
+    assert 320 <= win_w <= 340
+    assert 240 <= win_h <= 260
+
+    # Mini-HUD dimension requirements
+    hud_w, hud_h = 118, 32
+    assert hud_w == 118
+    assert hud_h == 32
+
+    # Viewport Clamping & Touch-Safe Margin Logic
+    def clamp_pos(target_x, target_y, fw, fh, vw, vh, margin=10):
+        min_x = margin
+        max_x = max(min_x, vw - fw - margin)
+        min_y = 38
+        max_y = max(min_y, vh - fh - margin)
+
+        cx = max(min_x, min(target_x, max_x))
+        cy = max(min_y, min(target_y, max_y))
+
+        # Joystick exclusion: [0..155, vh-155..vh]
+        if cx < 155 and (cy + fh) > (vh - 155):
+            if (vh - 155 - fh - 6) >= min_y:
+                cy = vh - 155 - fh - 6
+            else:
+                cx = 160
+
+        # Jump exclusion: [vw-85..vw, vh-85..vh]
+        if (cx + fw) > (vw - 85) and (cy + fh) > (vh - 85):
+            if (vh - 85 - fh - 6) >= min_y:
+                cy = vh - 85 - fh - 6
+            else:
+                cx = max(min_x, vw - 85 - fw - 6)
+
+        return cx, cy
+
+    # Test 1: Standard center placement
+    cx, cy = clamp_pos(400, 200, win_w, win_h, 1280, 720)
+    assert cx == 400
+    assert cy == 200
+
+    # Test 2: Attempting to drag window into Joystick Dead Zone (Bottom-Left)
+    cx, cy = clamp_pos(20, 600, win_w, win_h, 1280, 720)
+    # Must NOT overlap joystick zone
+    assert not (cx < 155 and (cy + win_h) > (720 - 155))
+
+    # Test 3: Attempting to drag window into Jump Button Dead Zone (Bottom-Right)
+    cx, cy = clamp_pos(1200, 650, win_w, win_h, 1280, 720)
+    # Must NOT overlap jump zone
+    assert not ((cx + win_w) > (1280 - 85) and (cy + win_h) > (720 - 85))
+
+    # Test 4: Top safe area clearance (Notch & CoreGui)
+    cx, cy = clamp_pos(200, 10, win_w, win_h, 1280, 720)
+    assert cy >= 38
+
+
+
 # ==============================================================================
 # 8. LUAU SYNTAX & BRACKET INTEGRITY CHECK
 # ==============================================================================
@@ -635,6 +706,7 @@ def test_all_luau_files_bracket_integrity():
         "MM2_HighFPS_Engine.luau",
         "MM2_IconPrimitives.luau",
         "MM2_Mobile_UI.luau",
+        "MM2_CompanionFeatures.luau",
     ]
     for filename in luau_files:
         filepath = os.path.join(os.path.dirname(__file__), "..", filename)

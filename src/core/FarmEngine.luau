@@ -89,14 +89,9 @@ function FarmEngine.Init(uiUpdateCallback: ((metrics: any) -> ())?)
             if FarmEngine.IsRunning then
                 task.wait(0.5) -- Allow player spawn to replicate
                 if MapManager.IsRoundActive() then
-                    if State.Config.Noclip then
-                        Movement.SetNoclip(true)
-                    end
-                    State.SetStatus("SCANNING", "Раунд начался! Поиск конфет...")
+                    State.SetStatus("SCANNING", "Раунд начался! Мониторинг конфет...")
                     FarmEngine.WakeLoop()
                 else
-                    Movement.Cancel()
-                    Movement.SetNoclip(false)
                     State.SetStatus("WAITING_MAP", "Ожидание начала раунда...")
                 end
             end
@@ -105,17 +100,11 @@ function FarmEngine.Init(uiUpdateCallback: ((metrics: any) -> ())?)
             FarmEngine._roundsFarmed += 1
             State.IncrementRounds()
 
-            -- Immediately halt all movement and restore normal collisions
-            Movement.Cancel()
-            Movement.SetNoclip(false)
             FarmEngine._activeTarget = nil
             State.SetDistance(0)
 
             if FarmEngine.IsRunning then
                 State.SetStatus("ROUND_OVER", "Раунд завершён, пауза...")
-                if State.Config.SafeSpotOnFull then
-                    MapManager.TeleportToSafePlatform()
-                end
             end
         end,
         OnMapChanged = function(map)
@@ -130,8 +119,6 @@ function FarmEngine.Init(uiUpdateCallback: ((metrics: any) -> ())?)
                     State.SetStatus("SCANNING", "Карта подтверждена: " .. (map and map.Name or "Игра"))
                     FarmEngine.WakeLoop()
                 else
-                    Movement.Cancel()
-                    Movement.SetNoclip(false)
                     State.SetStatus("WAITING_MAP", "Ожидание начала раунда...")
                 end
             end
@@ -174,15 +161,10 @@ function FarmEngine.Init(uiUpdateCallback: ((metrics: any) -> ())?)
     FarmEngine._maid:GiveTask(LocalPlayer.CharacterAdded:Connect(function(char)
         task.wait(1.0)
         if FarmEngine.IsRunning and State.Config.AutoResumeOnRespawn then
-            Movement.Cancel()
             if MapManager.IsRoundActive() then
-                if State.Config.Noclip then
-                    Movement.SetNoclip(true)
-                end
-                State.SetStatus("SCANNING", "Персонаж возрождён! Возобновление сбора...")
+                State.SetStatus("SCANNING", "Персонаж возрождён! Наблюдение за сбором...")
                 FarmEngine.WakeLoop()
             else
-                Movement.SetNoclip(false)
                 State.SetStatus("WAITING_MAP", "Возрождение в лобби. Ожидание раунда...")
             end
         end
@@ -240,15 +222,9 @@ end
 
 -- Handle Bag Full state
 function FarmEngine.HandleBagFull()
-    Movement.Cancel()
-    Movement.SetNoclip(false)
     FarmEngine._activeTarget = nil
     State.SetDistance(0)
     State.SetStatus("BAG_FULL", "Сумка заполнена! Ожидание конца раунда")
-
-    if State.Config.SafeSpotOnFull then
-        MapManager.TeleportToSafePlatform()
-    end
 end
 
 -- Wake up the collection loop
@@ -261,7 +237,7 @@ function FarmEngine.WakeLoop()
     end)
 end
 
--- Start Farming
+-- Start Farming Telemetry Observer
 function FarmEngine.Start()
     if FarmEngine.IsRunning then return end
     FarmEngine.IsRunning = true
@@ -271,142 +247,61 @@ function FarmEngine.Start()
         AntiAFK.Enable()
     end
 
-    -- Initial safety: Do NOT move or noclip until round is confirmed active
-    Movement.Cancel()
-    Movement.SetNoclip(false)
     MapManager.RecordLobbyWaypoint()
 
     if MapManager.IsRoundActive() then
-        if State.Config.Noclip then
-            Movement.SetNoclip(true)
-        end
-        State.SetStatus("SCANNING", "Round confirmed! Locating candies...")
+        State.SetStatus("SCANNING", "Раунд активен — наблюдение за сбором RockHub...")
     else
-        State.SetStatus("WAITING_MAP", "Waiting for round to start (in lobby/intermission)...")
+        State.SetStatus("WAITING_MAP", "Ожидание раунда (в лобби/интермиссии)...")
     end
 
     FarmEngine.WakeLoop()
 end
 
--- Stop Farming
+-- Stop Farming Telemetry Observer
 function FarmEngine.Stop()
     FarmEngine.IsRunning = false
     State.Config.AutoFarm = false
     FarmEngine._loopToken += 1
 
-    Movement.Cancel()
-    Movement.SetNoclip(false)
-
-    State.SetStatus("IDLE", "Farm stopped by user")
+    State.SetStatus("IDLE", "Наблюдение остановлено пользователем")
     FarmEngine._activeTarget = nil
     State.SetDistance(0)
 end
 
--- The core candy collection loop (Strictly gated by MapManager.IsRoundActive)
+-- The passive companion collection loop (Zero movement, zero physics interference with RockHub)
+-- Note: Movement.MoveToAndCollect is decommissioned. RockHub performs active movement.
+-- FarmEngine operates strictly as a telemetry, metric broadcast, and HUD updater.
 function FarmEngine.RunCollectionLoop(token: number)
     while FarmEngine.IsRunning and token == FarmEngine._loopToken do
-        -- GATE 1: Fail-Closed Round Verification
-        if not MapManager.IsRoundActive() then
-            Movement.Cancel()
-            Movement.SetNoclip(false)
+        if MapManager.IsRoundActive() then
+            local char = LocalPlayer.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
+            local map, coinContainer = MapManager.FindActiveMap()
+            if hrp and coinContainer then
+                local targetPart, distance = CandyDetector.GetClosestCandy(coinContainer, hrp.Position, "Candy", MapManager.IsPositionInsideMap)
+                if not targetPart then
+                    targetPart, distance = CandyDetector.GetClosestCandy(coinContainer, hrp.Position, "All", MapManager.IsPositionInsideMap)
+                end
+                if targetPart then
+                    FarmEngine._activeTarget = targetPart
+                    State.SetDistance(distance)
+                    State.SetStatus("FARMING", string.format("Сбор RockHub | Ближайшая: %d м", math.floor(distance)))
+                else
+                    FarmEngine._activeTarget = nil
+                    State.SetDistance(0)
+                    State.SetStatus("SCANNING", "Ожидание спавна конфет...")
+                end
+            end
+        else
             FarmEngine._activeTarget = nil
             State.SetDistance(0)
-
-            local roundState = MapManager.GetRoundState()
-            if roundState == "ENDING" then
-                State.SetStatus("ROUND_OVER", "Round ended! Waiting for intermission...")
-                if State.Config.SafeSpotOnFull then
-                    MapManager.TeleportToSafePlatform()
-                end
-            else
-                State.SetStatus("WAITING_MAP", "Waiting for round to start (in lobby/intermission)...")
-            end
-
-            task.wait(0.5)
-            continue
+            State.SetStatus("WAITING_MAP", "Ожидание раунда...")
         end
 
-        -- GATE 2: Character and RootPart validity
-        local char = LocalPlayer.Character
-        if not char then
-            State.SetStatus("DEAD", "Waiting for character respawn...")
-            task.wait(0.5)
-            continue
-        end
-
-        local hrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?
-        local humanoid = char:FindFirstChildWhichIsA("Humanoid")
-        if not hrp or not humanoid or humanoid.Health <= 0 then
-            State.SetStatus("DEAD", "Player dead, awaiting respawn...")
-            task.wait(0.5)
-            continue
-        end
-
-        -- GATE 3: Check Bag Full condition
-        local effectiveLimit = (State.Config.BagLimit > 0) and State.Config.BagLimit or State.BagCapacity
-        if State.CandiesInBag >= effectiveLimit then
-            FarmEngine.HandleBagFull()
-            task.wait(1.5)
-            continue
-        end
-
-        -- GATE 4: Active Map & CoinContainer existence
-        local map, coinContainer = MapManager.FindActiveMap()
-        if not map or not coinContainer then
-            State.SetStatus("WAITING_MAP", "Map not ready...")
-            task.wait(0.5)
-            continue
-        end
-
-        State.SetMap(map.Name)
-
-        -- Enable noclip now that round is 100% active
-        if State.Config.Noclip and not Movement.NoclipEnabled then
-            Movement.SetNoclip(true)
-        end
-
-        -- Find closest valid candy, strictly checking map bounds!
-        local targetPart, distance = CandyDetector.GetClosestCandy(coinContainer, hrp.Position, "Candy", MapManager.IsPositionInsideMap)
-        if not targetPart then
-            targetPart, distance = CandyDetector.GetClosestCandy(coinContainer, hrp.Position, "All", MapManager.IsPositionInsideMap)
-        end
-
-        if not targetPart then
-            State.SetStatus("SCANNING", "Конфеты не найдены, сканирую...")
-            task.wait(0.5)
-            continue
-        end
-
-        FarmEngine._activeTarget = targetPart
-        State.SetDistance(distance)
-        State.SetStatus("MOVING", string.format("Движение к конфете (%d м)", math.floor(distance)))
-
-        -- Execute continuous movement with live round active check
-        local speed = State.Config.MoveSpeed or 28
-        local method = State.Config.MoveMethod or "Continuous"
-        local success, reason = Movement.MoveToAndCollect(
-            targetPart,
-            speed,
-            method,
-            MapManager.IsRoundActive
-        )
-
-        if not FarmEngine.IsRunning or token ~= FarmEngine._loopToken then
-            break
-        end
-
-        if success then
-            State.SetStatus("COLLECTING", "Конфета успешно собрана")
-            FarmEngine.BroadcastMetrics()
-        else
-            State.SetStatus("SCANNING", "Конфета недоступна (" .. tostring(reason) .. "), переключаю цель...")
-            CandyDetector.RecordFailedPickup(targetPart, 2)
-            CandyDetector.BlacklistCoin(targetPart, 10)
-            FarmEngine.BroadcastMetrics()
-        end
-
+        FarmEngine.BroadcastMetrics()
         CandyDetector.PruneBlacklist()
-        task.wait(0.05)
+        task.wait(0.5)
     end
 end
 
