@@ -421,7 +421,7 @@ def main():
         print("\n[FAILED] Verification gate rejected the distribution artifact.")
         sys.exit(1)
 
-    DIST_FILE.write_text(bundle_text, encoding="utf-8")
+    DIST_FILE.write_text(bundle_text, encoding="utf-8", newline="\n")
     line_count = len(bundle_text.splitlines())
     byte_count = len(bundle_text.encode("utf-8"))
 
