@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+
+# Research / Raw untrusted reference files
+research/
+
+# OS / Local config
+.DS_Store
+Thumbs.db
+*.tmp
