@@ -52,7 +52,7 @@ def generate_single_file_distribution() -> str:
     ==============================================================================
     PRIVATE MM2 CANDY FARM — DELTA EXECUTOR ANDROID / WINDOWS
     ==============================================================================
-    Version: 2.0.0 PRO (Autonomous Clean-Room Implementation)
+    Version: 2.0.1 PRO (Hardened Startup & Safe Parent Architecture)
     Platform: Delta Executor (Android Mobile & Windows)
     Target: Roblox Murder Mystery 2 (Halloween Candy / Seasonal Coins)
     Author: Autonomous Engineering Team (Tech Lead & Council)
@@ -72,162 +72,229 @@ def generate_single_file_distribution() -> str:
     - Screen Boundary Clamping & Mini HUD Pill      [VERIFIED & IMPLEMENTED]
     - Local Settings Persistence (readfile/writefile)[VERIFIED & IMPLEMENTED]
     - Clean Unload & Exit Script                    [VERIFIED & IMPLEMENTED]
+    - Visual Startup Diagnostics & Error Guard      [VERIFIED & IMPLEMENTED]
     ==============================================================================
 ]]
 
 do
-    -- Prevent multiple running instances in the executor session
+    -- 1. Ensure game engine is loaded
+    if not game:IsLoaded() then
+        game.Loaded:Wait()
+    end
+
+    local Players = game:GetService("Players")
+    local LocalPlayer = Players.LocalPlayer
+    local waitLimit = os.clock() + 10
+    while not LocalPlayer and os.clock() < waitLimit do
+        task.wait(0.1)
+        LocalPlayer = Players.LocalPlayer
+    end
+
+    if not LocalPlayer then
+        error("[Private MM2 Farm] Critical: LocalPlayer could not be resolved.")
+    end
+
+    -- 2. Prevent duplicate running instances in the same session
     if _G.PrivateMM2CandyFarmCleanup then
         pcall(_G.PrivateMM2CandyFarmCleanup)
         _G.PrivateMM2CandyFarmCleanup = nil
     end
 
-    local Workspace = game:GetService("Workspace")
-    local Players = game:GetService("Players")
-    local ReplicatedStorage = game:GetService("ReplicatedStorage")
-    local RunService = game:GetService("RunService")
-    local TweenService = game:GetService("TweenService")
-    local UserInputService = game:GetService("UserInputService")
-    local CoreGui = game:GetService("CoreGui")
-    local HttpService = game:GetService("HttpService")
-    local Lighting = game:GetService("Lighting")
+    local initSuccess, initError = pcall(function()
+        local Workspace = game:GetService("Workspace")
+        local ReplicatedStorage = game:GetService("ReplicatedStorage")
+        local RunService = game:GetService("RunService")
+        local TweenService = game:GetService("TweenService")
+        local UserInputService = game:GetService("UserInputService")
+        local CoreGui = game:GetService("CoreGui")
+        local HttpService = game:GetService("HttpService")
+        local Lighting = game:GetService("Lighting")
 
-    local LocalPlayer = Players.LocalPlayer
-
-    -- MODULE 1: Maid (Lifecycle Manager)
-    local Maid = (function()
+        -- MODULE 1: Maid (Lifecycle Manager)
+        local Maid = (function()
 {maid_src}
-    end)()
+        end)()
 
-    -- MODULE 2: AntiAFK (VirtualUser + getconnections)
-    local AntiAFK = (function()
+        -- MODULE 2: AntiAFK (VirtualUser + getconnections)
+        local AntiAFK = (function()
 {antiafk_src}
-    end)()
+        end)()
 
-    -- MODULE 3: State Store
-    local State = (function()
+        -- MODULE 3: State Store
+        local State = (function()
 {state_src}
-    end)()
+        end)()
 
-    -- MODULE 4: Performance Controller
-    local Performance = (function()
+        -- MODULE 4: Performance Controller
+        local Performance = (function()
 {perf_src}
-    end)()
+        end)()
 
-    -- MODULE 5: Persistence Manager (Delta readfile/writefile)
-    local Persistence = (function()
+        -- MODULE 5: Persistence Manager (Delta readfile/writefile)
+        local Persistence = (function()
 {persist_src}
-    end)()
+        end)()
 
-    -- MODULE 6: Map & Round Lifecycle Manager
-    local MapManager = (function()
+        -- MODULE 6: Map & Round Lifecycle Manager
+        local MapManager = (function()
 {mapmgr_src}
-    end)()
+        end)()
 
-    -- MODULE 7: Candy & Coin Detector
-    local CandyDetector = (function()
+        -- MODULE 7: Candy & Coin Detector
+        local CandyDetector = (function()
 {candydet_src}
-    end)()
+        end)()
 
-    -- MODULE 8: Movement Engine
-    local Movement = (function()
+        -- MODULE 8: Movement Engine
+        local Movement = (function()
 {move_src}
-    end)()
+        end)()
 
-    -- MODULE 9: Farm Engine Orchestrator
-    local FarmEngine = (function()
+        -- MODULE 9: Farm Engine Orchestrator
+        local FarmEngine = (function()
 {engine_src}
-    end)()
+        end)()
 
-    -- MODULE 10: Mobile UI (Delta Touch Interface)
-    local MobileUI = (function()
+        -- MODULE 10: Mobile UI (Delta Touch Interface)
+        local MobileUI = (function()
 {ui_src}
-    end)()
+        end)()
 
-    -- ==============================================================================
-    -- RUNTIME INTEGRATION & ENTRY POINT
-    -- ==============================================================================
-    local UI = nil
+        -- ==============================================================================
+        -- RUNTIME INTEGRATION & ENTRY POINT
+        -- ==============================================================================
+        local UI = nil
 
-    local function HandleUnload()
-        FarmEngine.Destroy()
-        if UI then
-            UI:Destroy()
-            UI = nil
-        end
-        _G.PrivateMM2CandyFarmCleanup = nil
-        print("[Private MM2 Candy Farm] Unloaded cleanly.")
-    end
-
-    _G.PrivateMM2CandyFarmCleanup = HandleUnload
-
-    local function ResolveSpeed(mode)
-        if mode == "Normal" then return 28
-        elseif mode == "Fast" then return 38
-        elseif mode == "Instant" then return 80
-        end
-        return 32
-    end
-
-    UI = MobileUI.Init({{
-        OnToggleFarm = function(enabled)
-            if enabled then
-                FarmEngine.Start()
-            else
-                FarmEngine.Stop()
+        local function HandleUnload()
+            FarmEngine.Destroy()
+            if UI then
+                UI:Destroy()
+                UI = nil
             end
-        end,
-
-        OnSpeedChanged = function(mode)
-            local speed = ResolveSpeed(mode)
-            State.SetConfig("MoveSpeed", speed)
-            State.SetConfig("MoveMethod", (mode == "Instant") and "Instant" or "Tween")
-            Persistence.Save(State.Config)
-        end,
-
-        OnBagCapacityChanged = function(capStr)
-            local cap = tonumber(capStr) or 0
-            State.SetConfig("BagLimit", cap)
-            Persistence.Save(State.Config)
-        end,
-
-        OnSafePlatformChanged = function(enabled)
-            State.SetConfig("SafeSpotOnFull", enabled)
-            Persistence.Save(State.Config)
-        end,
-
-        OnAutoResumeChanged = function(enabled)
-            State.SetConfig("AutoResumeOnRespawn", enabled)
-            Persistence.Save(State.Config)
-        end,
-
-        OnAntiAFKChanged = function(enabled)
-            State.SetConfig("AntiAFK", enabled)
-            if enabled then
-                AntiAFK.Enable()
-            else
-                AntiAFK.Disable()
-            end
-            Persistence.Save(State.Config)
-        end,
-
-        OnPerfModeChanged = function(enabled)
-            Performance.SetPerformanceMode(enabled)
-        end,
-
-        OnUnload = function()
-            HandleUnload()
-        end,
-    }})
-
-    FarmEngine.Init(function(metrics)
-        if UI then
-            UI:UpdateMetrics(metrics)
-            UI:SetStatus(State.Status, State.StatusMessage)
+            _G.PrivateMM2CandyFarmCleanup = nil
+            print("[Private MM2 Candy Farm] Unloaded cleanly.")
         end
+
+        _G.PrivateMM2CandyFarmCleanup = HandleUnload
+
+        local function ResolveSpeed(mode)
+            if mode == "Normal" then return 28
+            elseif mode == "Fast" then return 38
+            elseif mode == "Instant" then return 80
+            end
+            return 32
+        end
+
+        UI = MobileUI.Init({{
+            OnToggleFarm = function(enabled)
+                if enabled then
+                    FarmEngine.Start()
+                else
+                    FarmEngine.Stop()
+                end
+            end,
+
+            OnSpeedChanged = function(mode)
+                local speed = ResolveSpeed(mode)
+                State.SetConfig("MoveSpeed", speed)
+                State.SetConfig("MoveMethod", (mode == "Instant") and "Instant" or "Tween")
+                Persistence.Save(State.Config)
+            end,
+
+            OnBagCapacityChanged = function(capStr)
+                local cap = tonumber(capStr) or 0
+                State.SetConfig("BagLimit", cap)
+                Persistence.Save(State.Config)
+            end,
+
+            OnSafePlatformChanged = function(enabled)
+                State.SetConfig("SafeSpotOnFull", enabled)
+                Persistence.Save(State.Config)
+            end,
+
+            OnAutoResumeChanged = function(enabled)
+                State.SetConfig("AutoResumeOnRespawn", enabled)
+                Persistence.Save(State.Config)
+            end,
+
+            OnAntiAFKChanged = function(enabled)
+                State.SetConfig("AntiAFK", enabled)
+                if enabled then
+                    AntiAFK.Enable()
+                else
+                    AntiAFK.Disable()
+                end
+                Persistence.Save(State.Config)
+            end,
+
+            OnPerfModeChanged = function(enabled)
+                Performance.SetPerformanceMode(enabled)
+            end,
+
+            OnUnload = function()
+                HandleUnload()
+            end,
+        }})
+
+        FarmEngine.Init(function(metrics)
+            if UI then
+                UI:UpdateMetrics(metrics)
+                UI:SetStatus(State.Status, State.StatusMessage)
+            end
+        end)
+
+        print("[Private MM2 Candy Farm] Running! Touch the floating candy pill or dashboard to control.")
     end)
 
-    print("[Private MM2 Candy Farm] Running! Touch the floating candy pill or dashboard to control.")
+    if not initSuccess then
+        local errString = tostring(initError)
+        warn("[Private MM2 Candy Farm STARTUP FAILURE]: " .. errString)
+
+        -- Visible On-Screen Diagnostic Fallback (renders directly in PlayerGui so mobile user sees error)
+        pcall(function()
+            local playerGui = LocalPlayer:WaitForChild("PlayerGui", 5) or LocalPlayer:FindFirstChildOfClass("PlayerGui")
+            if playerGui then
+                local errGui = Instance.new("ScreenGui")
+                errGui.Name = "MM2_Startup_Error_Diag"
+                errGui.ResetOnSpawn = false
+                errGui.DisplayOrder = 999999
+                errGui.Parent = playerGui
+
+                local errFrame = Instance.new("Frame")
+                errFrame.Size = UDim2.new(0, 320, 0, 100)
+                errFrame.Position = UDim2.new(0.5, -160, 0, 20)
+                errFrame.BackgroundColor3 = Color3.fromRGB(40, 10, 15)
+                errFrame.BorderSizePixel = 0
+                errFrame.Parent = errGui
+
+                local corner = Instance.new("UICorner", errFrame)
+                corner.CornerRadius = UDim.new(0, 8)
+
+                local stroke = Instance.new("UIStroke", errFrame)
+                stroke.Color = Color3.fromRGB(239, 68, 68)
+                stroke.Thickness = 1.5
+
+                local errTitle = Instance.new("TextLabel", errFrame)
+                errTitle.Size = UDim2.new(1, -16, 0, 24)
+                errTitle.Position = UDim2.new(0, 8, 0, 6)
+                errTitle.BackgroundTransparency = 1
+                errTitle.Text = "❌ MM2 FARM STARTUP ERROR"
+                errTitle.Font = Enum.Font.GothamBold
+                errTitle.TextSize = 12
+                errTitle.TextColor3 = Color3.fromRGB(239, 68, 68)
+
+                local errDesc = Instance.new("TextLabel", errFrame)
+                errDesc.Size = UDim2.new(1, -16, 0, 60)
+                errDesc.Position = UDim2.new(0, 8, 0, 30)
+                errDesc.BackgroundTransparency = 1
+                errDesc.Text = errString
+                errDesc.Font = Enum.Font.GothamMedium
+                errDesc.TextSize = 10
+                errDesc.TextColor3 = Color3.fromRGB(255, 200, 200)
+                errDesc.TextWrapped = true
+            end
+        end)
+    end
 end
 """
     return bundle
@@ -235,7 +302,6 @@ end
 def run_security_audit(bundle_text: str) -> bool:
     print("[1/3] Running Security & Anti-Malware Audit...")
     failed = False
-    # Strip multi-line comments for security check so that documentation doesn't trip code checkers
     code_only = re.sub(r'--\[\[.*?\]\]', '', bundle_text, flags=re.DOTALL)
     for pattern, description in BANNED_PATTERNS:
         matches = list(re.finditer(pattern, code_only, re.IGNORECASE))
@@ -257,7 +323,6 @@ def run_syntax_verification(bundle_text: str) -> bool:
         return False
     print("  [PASS] All modules successfully inlined. Zero external require() dependencies.")
 
-    # Check for uncontrolled infinite loops: while true do without wait
     dangerous_loops = []
     lines = bundle_text.splitlines()
     for idx, line in enumerate(lines):
@@ -288,6 +353,8 @@ def run_regression_tests(bundle_text: str) -> bool:
         ("Candy blacklist mechanism", "BlacklistCoin" in bundle_text),
         ("Clean Unload & Exit script callback", "HandleUnload" in bundle_text and "UnloadBtn" in bundle_text),
         ("Performance Mode FPS booster", "SetPerformanceMode" in bundle_text),
+        ("Safe 3-tier GUI Parent Resolver (gethui -> CoreGui -> PlayerGui)", "ResolveGuiParent" in bundle_text),
+        ("Visible On-Screen Startup Diagnostic Guard", "MM2_Startup_Error_Diag" in bundle_text),
     ]
 
     all_passed = True

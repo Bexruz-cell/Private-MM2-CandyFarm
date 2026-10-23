@@ -1,5 +1,5 @@
 --!strict
--- MobileUI.luau: Premium Delta Android Mobile Interface
+-- MobileUI.luau: Premium Delta Android Mobile Interface (Corrected & Hardened)
 -- 100% self-contained Luau GUI with touch drag, screen boundary clamping,
 -- mini HUD launcher, live metrics, performance toggle, and clean unload.
 
@@ -10,6 +10,10 @@ local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 
 local LocalPlayer = Players.LocalPlayer
+while not LocalPlayer do
+    task.wait(0.1)
+    LocalPlayer = Players.LocalPlayer
+end
 
 local UI_NAME = "MM2_Private_CandyFarm_UI"
 
@@ -36,24 +40,53 @@ local FONTS = {
     BLACK   = Enum.Font.GothamBlack,
 }
 
-local function GetSafeGuiParent(): Instance
-    if typeof(gethui) == "function" then
-        local success, hui = pcall(gethui)
-        if success and hui then return hui end
+-- Safe, robust parent resolver with 3-tier cascade (gethui -> CoreGui -> PlayerGui)
+local function ResolveGuiParent(screenGui: ScreenGui): (Instance, string)
+    -- 1. Try gethui() if supported by executor
+    if type(gethui) == "function" then
+        local ok, hui = pcall(gethui)
+        if ok and hui then
+            local parentOk = pcall(function()
+                screenGui.Parent = hui
+            end)
+            if parentOk and screenGui.Parent == hui then
+                return hui, "gethui"
+            end
+        end
     end
-    local success, core = pcall(function() return CoreGui end)
-    if success and core then return core end
-    return LocalPlayer:WaitForChild("PlayerGui")
+
+    -- 2. Try CoreGui inside pcall
+    local coreOk = pcall(function()
+        local core = game:GetService("CoreGui")
+        screenGui.Parent = core
+    end)
+    if coreOk and screenGui.Parent == game:GetService("CoreGui") then
+        return game:GetService("CoreGui"), "CoreGui"
+    end
+
+    -- 3. Guaranteed fallback: PlayerGui (Always exists, always renders on Android mobile!)
+    local playerGui = LocalPlayer:WaitForChild("PlayerGui", 5) or LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if playerGui then
+        screenGui.Parent = playerGui
+        return playerGui, "PlayerGui"
+    end
+
+    error("Critical: Could not resolve valid GUI parent (gethui, CoreGui, PlayerGui all failed)")
 end
 
+-- Safe Instance Builder (Protected against deprecated properties)
 local function Create(className: string, properties: { [string]: any }, children: { Instance }?): Instance
     local inst = Instance.new(className)
     for k, v in pairs(properties or {}) do
-        (inst :: any)[k] = v
+        pcall(function()
+            (inst :: any)[k] = v
+        end)
     end
     if children then
         for _, child in ipairs(children) do
-            child.Parent = inst
+            pcall(function()
+                child.Parent = inst
+            end)
         end
     end
     return inst
@@ -69,7 +102,7 @@ end
 -- Clamp GUI position within screen viewport so it cannot be dragged off-screen on Android
 local function ClampToViewport(targetFrame: GuiObject, goalOffset: Vector2): UDim2
     local camera = Workspace.CurrentCamera
-    local viewport = camera and camera.ViewportSize or Vector2.new(800, 600)
+    local viewport = (camera and camera.ViewportSize.X > 50) and camera.ViewportSize or Vector2.new(1280, 720)
     local frameSize = targetFrame.AbsoluteSize
 
     local minX = 0
@@ -117,7 +150,7 @@ local function MakeClampedDraggable(dragHandle: GuiObject, targetFrame: GuiObjec
         if dragging and input == dragInput then
             local delta = input.Position - dragStart
             local camera = Workspace.CurrentCamera
-            local viewport = camera and camera.ViewportSize or Vector2.new(800, 600)
+            local viewport = (camera and camera.ViewportSize.X > 50) and camera.ViewportSize or Vector2.new(1280, 720)
             local currentAbsX = startPos.X.Scale * viewport.X + startPos.X.Offset + delta.X
             local currentAbsY = startPos.Y.Scale * viewport.Y + startPos.Y.Offset + delta.Y
 
@@ -145,21 +178,35 @@ function MobileUI.Init(userCallbacks: { [string]: any })
         PerfMode = false,
     }
 
-    local safeParent = GetSafeGuiParent()
-    local existing = safeParent:FindFirstChild(UI_NAME)
-    if existing then
-        pcall(function() existing:Destroy() end)
-    end
+    -- 1. Clean up any previous GUI instances in all possible locations
+    pcall(function()
+        if type(gethui) == "function" then
+            local hui = gethui()
+            if hui and hui:FindFirstChild(UI_NAME) then hui[UI_NAME]:Destroy() end
+        end
+    end)
+    pcall(function()
+        local core = game:GetService("CoreGui")
+        if core and core:FindFirstChild(UI_NAME) then core[UI_NAME]:Destroy() end
+    end)
+    pcall(function()
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        if pg and pg:FindFirstChild(UI_NAME) then pg[UI_NAME]:Destroy() end
+    end)
 
-    local screenGui = Create("ScreenGui", {
-        Name = UI_NAME,
-        ResetOnSpawn = false,
-        IgnoreGuiInset = true,
-        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-        DisplayOrder = 9999,
-        Parent = safeParent,
-    })
+    -- 2. Instantiate ScreenGui without parent initially
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = UI_NAME
+    screenGui.ResetOnSpawn = false
+    screenGui.IgnoreGuiInset = true
+    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    screenGui.DisplayOrder = 999999
+    screenGui.Enabled = true
+
+    -- 3. Resolve parent safely
+    local resolvedParent, parentType = ResolveGuiParent(screenGui)
     self.ScreenGui = screenGui
+    print("[Private MM2 Candy Farm] GUI successfully parented to: " .. parentType)
 
     -- Floating Launcher Pill (Mini HUD when main window is hidden)
     local floatingPill = Create("Frame", {
