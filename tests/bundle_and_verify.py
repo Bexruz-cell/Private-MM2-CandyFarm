@@ -46,15 +46,17 @@ def generate_single_file_distribution() -> str:
     candydet_src = clean_module_code((SRC_DIR / "core" / "CandyDetector.luau").read_text(encoding="utf-8"))
     move_src = clean_module_code((SRC_DIR / "core" / "Movement.luau").read_text(encoding="utf-8"))
     engine_src = clean_module_code((SRC_DIR / "core" / "FarmEngine.luau").read_text(encoding="utf-8"))
+    icon_src = clean_module_code((SRC_DIR / "ui" / "IconPrimitives.luau").read_text(encoding="utf-8"))
+    zombie_src = clean_module_code((SRC_DIR / "features" / "ZombieMode.luau").read_text(encoding="utf-8"))
     ui_src = clean_module_code((SRC_DIR / "ui" / "MobileUI.luau").read_text(encoding="utf-8"))
 
     bundle = f"""--[[
     ==============================================================================
     PRIVATE MM2 CANDY FARM — DELTA EXECUTOR ANDROID / WINDOWS
     ==============================================================================
-    Version: 2.0.1 PRO (Hardened Startup & Safe Parent Architecture)
+    Version: 2.1.0 PRO (NEBULA PRO + MIDNIGHT + ZOMBIE ARCHITECTURE)
     Platform: Delta Executor (Android Mobile & Windows)
-    Target: Roblox Murder Mystery 2 (Halloween Candy / Seasonal Coins)
+    Target: Roblox Murder Mystery 2 (Halloween Candy / Seasonal Coins / Infection)
     Author: Autonomous Engineering Team (Tech Lead & Council)
 
     SECURITY NOTICE:
@@ -62,17 +64,15 @@ def generate_single_file_distribution() -> str:
     - Zero Webhooks, zero analytics, zero credential/token access.
     - Zero obfuscated code. Clean, inspectable, high-performance Luau.
 
-    ROCKHUB FEATURE PARITY:
-    - Coin & Candy Autofarm (Start / Stop)          [VERIFIED & IMPLEMENTED]
-    - Farm Speed Slider / Segmented Controls        [VERIFIED & IMPLEMENTED]
-    - Performance Mode (FPS Booster for Android)    [VERIFIED & IMPLEMENTED]
-    - Anti-AFK Idle Protection                      [VERIFIED & IMPLEMENTED]
-    - Safe Platform Parking (Void / Sky on Full)    [VERIFIED & IMPLEMENTED]
-    - Auto-Resume on Respawn & Intermission         [VERIFIED & IMPLEMENTED]
-    - Screen Boundary Clamping & Mini HUD Pill      [VERIFIED & IMPLEMENTED]
-    - Local Settings Persistence (readfile/writefile)[VERIFIED & IMPLEMENTED]
-    - Clean Unload & Exit Script                    [VERIFIED & IMPLEMENTED]
-    - Visual Startup Diagnostics & Error Guard      [VERIFIED & IMPLEMENTED]
+    FEATURES:
+    - Fast Continuous Movement (Heartbeat, zero velocity spikes) [IMPLEMENTED]
+    - Observable Tri-Signal Collection (no phantom pickups)       [IMPLEMENTED]
+    - Strict Fail-Closed Round State Machine (Lobby Safe)        [IMPLEMENTED]
+    - Dedicated Zombie & Infection Mode Controller               [IMPLEMENTED]
+    - High FPS Mode & Accurate Realtime FPS Counter              [IMPLEMENTED]
+    - 3-Tab Mobile Interface (ФАРМ, ЗОМБИ, НАСТРОЙКИ)            [IMPLEMENTED]
+    - Pure Vector Geometric Icon Primitives (Zero Emojis)        [IMPLEMENTED]
+    - Draggable Floating Mini-HUD Capsule (336 x 260 px)         [IMPLEMENTED]
     ==============================================================================
 ]]
 
@@ -155,7 +155,17 @@ do
 {engine_src}
         end)()
 
-        -- MODULE 10: Mobile UI (Delta Touch Interface)
+        -- MODULE 10: Native Vector Icon Primitives
+        local IconPrimitives = (function()
+{icon_src}
+        end)()
+
+        -- MODULE 11: Zombie & Infection Mode Controller
+        local ZombieMode = (function()
+{zombie_src}
+        end)()
+
+        -- MODULE 12: Mobile UI (NEBULA PRO + MIDNIGHT Interface)
         local MobileUI = (function()
 {ui_src}
         end)()
@@ -167,6 +177,7 @@ do
 
         local function HandleUnload()
             FarmEngine.Destroy()
+            ZombieMode.Stop()
             if UI then
                 UI:Destroy()
                 UI = nil
@@ -178,11 +189,11 @@ do
         _G.PrivateMM2CandyFarmCleanup = HandleUnload
 
         local function ResolveSpeed(mode)
-            if mode == "Normal" then return 28
-            elseif mode == "Fast" then return 38
-            elseif mode == "Instant" then return 80
+            if mode == "Обычная" or mode == "Normal" then return 28
+            elseif mode == "Быстрая" or mode == "Fast" then return 36
+            elseif mode == "Турбо" or mode == "Turbo" or mode == "Instant" then return 44
             end
-            return 32
+            return 36
         end
 
         UI = MobileUI.Init({{
@@ -194,10 +205,18 @@ do
                 end
             end,
 
+            OnToggleZombie = function(enabled)
+                if enabled then
+                    ZombieMode.Start()
+                else
+                    ZombieMode.Stop()
+                end
+            end,
+
             OnSpeedChanged = function(mode)
                 local speed = ResolveSpeed(mode)
                 State.SetConfig("MoveSpeed", speed)
-                State.SetConfig("MoveMethod", (mode == "Instant") and "Instant" or "Tween")
+                State.SetConfig("MoveMethod", "Continuous")
                 Persistence.Save(State.Config)
             end,
 
@@ -231,6 +250,20 @@ do
                 Performance.SetPerformanceMode(enabled)
             end,
 
+            OnResetSettings = function()
+                State.Config = {{
+                    AutoFarm = false,
+                    MoveSpeed = 36,
+                    MoveMethod = "Continuous",
+                    BagLimit = 0,
+                    AutoResumeOnRespawn = true,
+                    SafeSpotOnFull = true,
+                    AntiAFK = true,
+                    Noclip = true,
+                }}
+                Persistence.Save(State.Config)
+            end,
+
             OnUnload = function()
                 HandleUnload()
             end,
@@ -239,11 +272,19 @@ do
         FarmEngine.Init(function(metrics)
             if UI then
                 UI:UpdateMetrics(metrics)
-                UI:SetStatus(State.Status, State.StatusMessage)
+                local title = metrics.statusTitle or State.GetRussianStatusTitle()
+                local diag = metrics.diagnosticMessage or State.StatusMessage
+                UI:SetStatus(title, diag)
             end
         end)
 
-        print("[Private MM2 Candy Farm] Running! Touch the floating candy pill or dashboard to control.")
+        ZombieMode.Init(function(data)
+            if UI then
+                UI:UpdateZombieMetrics(data)
+            end
+        end)
+
+        print("[Private MM2 Candy Farm] Running! Touch floating pill or dashboard to control.")
     end)
 
     if not initSuccess then
@@ -278,7 +319,7 @@ do
                 errTitle.Size = UDim2.new(1, -16, 0, 24)
                 errTitle.Position = UDim2.new(0, 8, 0, 6)
                 errTitle.BackgroundTransparency = 1
-                errTitle.Text = "❌ MM2 FARM STARTUP ERROR"
+                errTitle.Text = "MM2 FARM STARTUP ERROR"
                 errTitle.Font = Enum.Font.GothamBold
                 errTitle.TextSize = 12
                 errTitle.TextColor3 = Color3.fromRGB(239, 68, 68)
@@ -302,17 +343,13 @@ end
 def run_security_audit(bundle_text: str) -> bool:
     print("[1/3] Running Security & Anti-Malware Audit...")
     failed = False
-    code_only = re.sub(r'--\[\[.*?\]\]', '', bundle_text, flags=re.DOTALL)
-    for pattern, description in BANNED_PATTERNS:
-        matches = list(re.finditer(pattern, code_only, re.IGNORECASE))
+    for pattern, desc in BANNED_PATTERNS:
+        matches = re.findall(pattern, bundle_text, re.IGNORECASE)
         if matches:
-            print(f"  [CRITICAL ALERT] Found banned pattern: {description}")
-            for m in matches:
-                line_no = code_only[:m.start()].count('\n') + 1
-                print(f"    Line {line_no}: {m.group(0)}")
+            print(f"  [MALICIOUS PATTERN DETECTED] {desc}: {len(matches)} matches")
             failed = True
         else:
-            print(f"  [PASS] {description}: 0 matches")
+            print(f"  [PASS] {desc}: 0 matches")
     return not failed
 
 def run_syntax_verification(bundle_text: str) -> bool:
@@ -355,6 +392,8 @@ def run_regression_tests(bundle_text: str) -> bool:
         ("Performance Mode FPS booster", "SetPerformanceMode" in bundle_text),
         ("Safe 3-tier GUI Parent Resolver (gethui -> CoreGui -> PlayerGui)", "ResolveGuiParent" in bundle_text),
         ("Visible On-Screen Startup Diagnostic Guard", "MM2_Startup_Error_Diag" in bundle_text),
+        ("Dedicated Zombie & Infection Mode Controller", "ZombieMode" in bundle_text and "Page_Zombie" in bundle_text),
+        ("Native Vector Icon Primitives (Zero Emojis)", "IconPrimitives" in bundle_text and "CreateIcon" in bundle_text),
     ]
 
     all_passed = True
@@ -378,14 +417,16 @@ def main():
     syntax_ok = run_syntax_verification(bundle_text)
     reg_ok = run_regression_tests(bundle_text)
 
-    if sec_ok and syntax_ok and reg_ok:
-        DIST_FILE.write_text(bundle_text, encoding="utf-8")
-        print(f"\n[SUCCESS] Distribution artifact written to:")
-        print(f"  {DIST_FILE} ({len(bundle_text):,} bytes, {bundle_text.count(chr(10))} lines)")
-        return 0
-    else:
+    if not (sec_ok and syntax_ok and reg_ok):
         print("\n[FAILED] Verification gate rejected the distribution artifact.")
-        return 1
+        sys.exit(1)
+
+    DIST_FILE.write_text(bundle_text, encoding="utf-8")
+    line_count = len(bundle_text.splitlines())
+    byte_count = len(bundle_text.encode("utf-8"))
+
+    print(f"\n[SUCCESS] Distribution artifact written to:")
+    print(f"  {DIST_FILE} ({byte_count:,} bytes, {line_count} lines)")
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

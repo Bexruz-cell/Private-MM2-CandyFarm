@@ -18,7 +18,7 @@ export type Config = {
 local State = {
     -- Runtime Status
     Status = "IDLE" :: FarmStatus,
-    StatusMessage = "Ready to start",
+    StatusMessage = "Готов к запуску",
     ActiveMapName = "None",
     CandiesInBag = 0,
     BagCapacity = 40,
@@ -43,12 +43,31 @@ local State = {
     _listeners = {} :: { (key: string, value: any) -> () },
 }
 
+function State.GetRussianStatusTitle(): string
+    local s = tostring(State.Status)
+    if s == "SCANNING" or s == "Поиск конфет" then
+        return "Поиск конфет"
+    elseif s == "MOVING" or s == "COLLECTING" or s == "Сбор конфет" or s == "Собираю конфеты" then
+        return "Сбор конфет"
+    elseif s == "BAG_FULL" or s == "Сумка заполнена" then
+        return "Сумка заполнена"
+    elseif s == "ROUND_OVER" or s == "Раунд завершён" then
+        return "Раунд завершён"
+    elseif s == "WAITING_MAP" or s == "IDLE" or s == "STOPPED" or s == "Ожидание раунда" then
+        return "Ожидание раунда"
+    elseif s == "DEAD" or s == "Ожидание возрождения" then
+        return "Ожидание возрождения"
+    end
+    return "Ожидание раунда"
+end
+
 function State.SetStatus(status: FarmStatus, message: string?)
     State.Status = status
     if message then
         State.StatusMessage = message
     end
     State._Emit("Status", status)
+    State._Emit("StatusTitle", State.GetRussianStatusTitle())
     State._Emit("StatusMessage", State.StatusMessage)
 end
 

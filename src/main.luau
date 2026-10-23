@@ -1,5 +1,5 @@
 --!strict
--- main.luau: Private MM2 Candy Farm Entry Point (Hardened & Diagnostic-Enabled)
+-- main.luau: Private MM2 Candy Farm Entry Point (NEBULA PRO + MIDNIGHT + ZOMBIE Architecture)
 -- Integrates all sub-modules with top-level error handling and visible screen diagnostics
 
 -- 1. Wait for game engine and client player to fully load
@@ -29,6 +29,7 @@ local success, initError = pcall(function()
     local Performance = require(script.core.Performance)
     local Persistence = require(script.core.Persistence)
     local FarmEngine = require(script.core.FarmEngine)
+    local ZombieMode = require(script.features.ZombieMode)
     local MobileUI = require(script.ui.MobileUI)
 
     -- Singleton cleanup if already running in executor
@@ -41,6 +42,7 @@ local success, initError = pcall(function()
 
     local function HandleUnload()
         FarmEngine.Destroy()
+        ZombieMode.Stop()
         if UI then
             UI:Destroy()
             UI = nil
@@ -51,14 +53,14 @@ local success, initError = pcall(function()
     _G.PrivateMM2CandyFarmCleanup = HandleUnload
 
     local function ResolveSpeed(mode: string): number
-        if mode == "Normal" then
+        if mode == "Обычная" or mode == "Normal" then
             return 28
-        elseif mode == "Fast" then
-            return 38
-        elseif mode == "Instant" then
-            return 80
+        elseif mode == "Быстрая" or mode == "Fast" then
+            return 36
+        elseif mode == "Турбо" or mode == "Turbo" or mode == "Instant" then
+            return 44
         end
-        return 32
+        return 36
     end
 
     -- Initialize UI with backend event callbacks
@@ -71,10 +73,18 @@ local success, initError = pcall(function()
             end
         end,
 
+        OnToggleZombie = function(enabled: boolean)
+            if enabled then
+                ZombieMode.Start()
+            else
+                ZombieMode.Stop()
+            end
+        end,
+
         OnSpeedChanged = function(mode: string)
             local speed = ResolveSpeed(mode)
             State.SetConfig("MoveSpeed", speed)
-            State.SetConfig("MoveMethod", (mode == "Instant") and "Instant" or "Tween")
+            State.SetConfig("MoveMethod", "Continuous")
             Persistence.Save(State.Config)
         end,
 
@@ -108,6 +118,20 @@ local success, initError = pcall(function()
             Performance.SetPerformanceMode(enabled)
         end,
 
+        OnResetSettings = function()
+            State.Config = {
+                AutoFarm = false,
+                MoveSpeed = 36,
+                MoveMethod = "Continuous",
+                BagLimit = 0,
+                AutoResumeOnRespawn = true,
+                SafeSpotOnFull = true,
+                AntiAFK = true,
+                Noclip = true,
+            }
+            Persistence.Save(State.Config)
+        end,
+
         OnUnload = function()
             HandleUnload()
         end,
@@ -117,7 +141,16 @@ local success, initError = pcall(function()
     FarmEngine.Init(function(metrics)
         if UI then
             UI:UpdateMetrics(metrics)
-            UI:SetStatus(State.Status, State.StatusMessage)
+            local title = metrics.statusTitle or State.GetRussianStatusTitle()
+            local diag = metrics.diagnosticMessage or State.StatusMessage
+            UI:SetStatus(title, diag)
+        end
+    end)
+
+    -- Initialize Zombie Mode with UI metric dispatcher
+    ZombieMode.Init(function(data)
+        if UI then
+            UI:UpdateZombieMetrics(data)
         end
     end)
 
@@ -128,7 +161,7 @@ if not success then
     local errString = tostring(initError)
     warn("[Private MM2 Candy Farm STARTUP FAILURE]: " .. errString)
 
-    -- Visible On-Screen Diagnostic Fallback (renders directly in PlayerGui so mobile user sees the error)
+    -- Visible On-Screen Diagnostic Fallback (renders directly in PlayerGui so mobile user sees error)
     pcall(function()
         local playerGui = LocalPlayer:WaitForChild("PlayerGui", 5) or LocalPlayer:FindFirstChildOfClass("PlayerGui")
         if playerGui then
@@ -156,7 +189,7 @@ if not success then
             errTitle.Size = UDim2.new(1, -16, 0, 24)
             errTitle.Position = UDim2.new(0, 8, 0, 6)
             errTitle.BackgroundTransparency = 1
-            errTitle.Text = "❌ MM2 FARM STARTUP ERROR"
+            errTitle.Text = "MM2 FARM STARTUP ERROR"
             errTitle.Font = Enum.Font.GothamBold
             errTitle.TextSize = 12
             errTitle.TextColor3 = Color3.fromRGB(239, 68, 68)

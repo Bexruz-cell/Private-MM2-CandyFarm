@@ -2,9 +2,9 @@
     ==============================================================================
     PRIVATE MM2 CANDY FARM — DELTA EXECUTOR ANDROID / WINDOWS
     ==============================================================================
-    Version: 2.0.1 PRO (Hardened Startup & Safe Parent Architecture)
+    Version: 2.1.0 PRO (NEBULA PRO + MIDNIGHT + ZOMBIE ARCHITECTURE)
     Platform: Delta Executor (Android Mobile & Windows)
-    Target: Roblox Murder Mystery 2 (Halloween Candy / Seasonal Coins)
+    Target: Roblox Murder Mystery 2 (Halloween Candy / Seasonal Coins / Infection)
     Author: Autonomous Engineering Team (Tech Lead & Council)
 
     SECURITY NOTICE:
@@ -12,17 +12,15 @@
     - Zero Webhooks, zero analytics, zero credential/token access.
     - Zero obfuscated code. Clean, inspectable, high-performance Luau.
 
-    ROCKHUB FEATURE PARITY:
-    - Coin & Candy Autofarm (Start / Stop)          [VERIFIED & IMPLEMENTED]
-    - Farm Speed Slider / Segmented Controls        [VERIFIED & IMPLEMENTED]
-    - Performance Mode (FPS Booster for Android)    [VERIFIED & IMPLEMENTED]
-    - Anti-AFK Idle Protection                      [VERIFIED & IMPLEMENTED]
-    - Safe Platform Parking (Void / Sky on Full)    [VERIFIED & IMPLEMENTED]
-    - Auto-Resume on Respawn & Intermission         [VERIFIED & IMPLEMENTED]
-    - Screen Boundary Clamping & Mini HUD Pill      [VERIFIED & IMPLEMENTED]
-    - Local Settings Persistence (readfile/writefile)[VERIFIED & IMPLEMENTED]
-    - Clean Unload & Exit Script                    [VERIFIED & IMPLEMENTED]
-    - Visual Startup Diagnostics & Error Guard      [VERIFIED & IMPLEMENTED]
+    FEATURES:
+    - Fast Continuous Movement (Heartbeat, zero velocity spikes) [IMPLEMENTED]
+    - Observable Tri-Signal Collection (no phantom pickups)       [IMPLEMENTED]
+    - Strict Fail-Closed Round State Machine (Lobby Safe)        [IMPLEMENTED]
+    - Dedicated Zombie & Infection Mode Controller               [IMPLEMENTED]
+    - High FPS Mode & Accurate Realtime FPS Counter              [IMPLEMENTED]
+    - 3-Tab Mobile Interface (ФАРМ, ЗОМБИ, НАСТРОЙКИ)            [IMPLEMENTED]
+    - Pure Vector Geometric Icon Primitives (Zero Emojis)        [IMPLEMENTED]
+    - Draggable Floating Mini-HUD Capsule (336 x 260 px)         [IMPLEMENTED]
     ==============================================================================
 ]]
 
@@ -245,7 +243,7 @@ export type Config = {
 local State = {
     -- Runtime Status
     Status = "IDLE" :: FarmStatus,
-    StatusMessage = "Ready to start",
+    StatusMessage = "Готов к запуску",
     ActiveMapName = "None",
     CandiesInBag = 0,
     BagCapacity = 40,
@@ -270,12 +268,31 @@ local State = {
     _listeners = {} :: { (key: string, value: any) -> () },
 }
 
+function State.GetRussianStatusTitle(): string
+    local s = tostring(State.Status)
+    if s == "SCANNING" or s == "Поиск конфет" then
+        return "Поиск конфет"
+    elseif s == "MOVING" or s == "COLLECTING" or s == "Сбор конфет" or s == "Собираю конфеты" then
+        return "Сбор конфет"
+    elseif s == "BAG_FULL" or s == "Сумка заполнена" then
+        return "Сумка заполнена"
+    elseif s == "ROUND_OVER" or s == "Раунд завершён" then
+        return "Раунд завершён"
+    elseif s == "WAITING_MAP" or s == "IDLE" or s == "STOPPED" or s == "Ожидание раунда" then
+        return "Ожидание раунда"
+    elseif s == "DEAD" or s == "Ожидание возрождения" then
+        return "Ожидание возрождения"
+    end
+    return "Ожидание раунда"
+end
+
 function State.SetStatus(status: FarmStatus, message: string?)
     State.Status = status
     if message then
         State.StatusMessage = message
     end
     State._Emit("Status", status)
+    State._Emit("StatusTitle", State.GetRussianStatusTitle())
     State._Emit("StatusMessage", State.StatusMessage)
 end
 
@@ -338,18 +355,41 @@ return State
 
         -- MODULE 4: Performance Controller
         local Performance = (function()
--- Performance.luau: Low-End Android & Delta Executor Optimization
--- Controls 3D rendering toggles, particle stripping, and FPS booster
+-- Performance.luau: Low-End Android & Delta Executor High FPS Optimization
+-- Accurately measures real FPS and disables heavy graphics effects with full state restoration.
 
 local RunService = game:GetService("RunService")
 local Lighting = game:GetService("Lighting")
+local Workspace = game:GetService("Workspace")
 
 local Performance = {
     _3dRendering = true,
     _perfMode = false,
-    _originalShadows = true,
-    _originalFog = 1000,
+    _savedShadows = true,
+    _savedFog = 1000,
+    _savedLightingProps = {} :: { [string]: any },
+    _disabledEffects = {} :: { [Instance]: boolean },
+    _fps = 60.0,
+    _frameCount = 0,
+    _fpsTimer = 0.0,
 }
+
+-- Real FPS calculation using frame timing (independent of display limits)
+pcall(function()
+    RunService.RenderStepped:Connect(function(dt: number)
+        Performance._frameCount += 1
+        Performance._fpsTimer += dt
+        if Performance._fpsTimer >= 0.5 then
+            Performance._fps = math.floor((Performance._frameCount / Performance._fpsTimer) * 10) / 10
+            Performance._frameCount = 0
+            Performance._fpsTimer = 0.0
+        end
+    end)
+end)
+
+function Performance.GetRealFPS(): number
+    return Performance._fps
+end
 
 function Performance.Set3DRendering(enabled: boolean)
     Performance._3dRendering = enabled
@@ -358,32 +398,54 @@ function Performance.Set3DRendering(enabled: boolean)
     end)
 end
 
+-- High FPS Mode: strips particle emitters, shadows, and post-processing while saving originals
 function Performance.SetPerformanceMode(enabled: boolean)
     Performance._perfMode = enabled
 
     pcall(function()
         if enabled then
-            Performance._originalShadows = Lighting.GlobalShadows
-            Performance._originalFog = Lighting.FogEnd
-
+            -- Save lighting configuration
+            Performance._savedShadows = Lighting.GlobalShadows
+            Performance._savedFog = Lighting.FogEnd
             Lighting.GlobalShadows = false
             Lighting.FogEnd = 9e9
 
-            -- Disable heavy decals and particles in workspace
-            for _, obj in ipairs(game:GetService("Workspace"):GetDescendants()) do
-                if obj:IsA("ParticleEmitter") or obj:IsA("Smoke") or obj:IsA("Fire") or obj:IsA("Sparkles") then
-                    obj.Enabled = false
+            -- Save and disable heavy post-processing effects in Lighting
+            for _, child in ipairs(Lighting:GetChildren()) do
+                if child:IsA("BloomEffect") or child:IsA("SunRaysEffect") or child:IsA("ColorCorrectionEffect") or child:IsA("DepthOfFieldEffect") or child:IsA("BlurEffect") then
+                    if child.Enabled then
+                        Performance._disabledEffects[child] = true
+                        child.Enabled = false
+                    end
+                end
+            end
+
+            -- Disable heavy particle emitters and decals in workspace, excluding MM2 coin containers
+            for _, obj in ipairs(Workspace:GetDescendants()) do
+                -- NEVER touch coin containers or active candy models
+                if obj.Name ~= "CoinContainer" and not obj:FindFirstChild("TouchInterest") and not obj:FindFirstChildWhichIsA("TouchTransmitter") then
+                    if obj:IsA("ParticleEmitter") or obj:IsA("Smoke") or obj:IsA("Fire") or obj:IsA("Sparkles") then
+                        if obj.Enabled then
+                            Performance._disabledEffects[obj] = true
+                            obj.Enabled = false
+                        end
+                    end
                 end
             end
         else
-            Lighting.GlobalShadows = Performance._originalShadows
-            Lighting.FogEnd = Performance._originalFog
+            -- Restore original lighting
+            Lighting.GlobalShadows = Performance._savedShadows
+            Lighting.FogEnd = Performance._savedFog
 
-            for _, obj in ipairs(game:GetService("Workspace"):GetDescendants()) do
-                if obj:IsA("ParticleEmitter") or obj:IsA("Smoke") or obj:IsA("Fire") or obj:IsA("Sparkles") then
-                    obj.Enabled = true
+            -- Restore all modified particle and post-processing effects
+            for effect, wasEnabled in pairs(Performance._disabledEffects) do
+                if effect and effect.Parent and wasEnabled then
+                    pcall(function()
+                        (effect :: any).Enabled = true
+                    end)
                 end
             end
+            table.clear(Performance._disabledEffects)
         end
     end)
 end
@@ -453,62 +515,87 @@ return Persistence
 
         -- MODULE 6: Map & Round Lifecycle Manager
         local MapManager = (function()
--- MapManager.luau: MM2 Active Map & Round Lifecycle Manager
--- Discovers active map, manages round states, and provides safe parking staging
+-- MapManager.luau: MM2 Map Discovery & Fail-Closed Round State Machine
+-- Strictly prevents any movement in lobby, intermission, voting, or outside map bounds.
 
 local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 
 local LocalPlayer = Players.LocalPlayer
+while not LocalPlayer do
+    task.wait(0.1)
+    LocalPlayer = Players.LocalPlayer
+end
 
-export type RoundState = "WAITING" | "ROUND_ACTIVE" | "ROUND_ENDED"
+export type RussianRoundState = 
+    "Ожидание раунда" 
+    | "Раунд начался" 
+    | "Сбор конфет" 
+    | "Сумка заполнена" 
+    | "Раунд завершён" 
+    | "Ошибка"
+
+local LOBBY_SPAWN_POSITION = Vector3.new(-108, 140, -9)
+local LOBBY_MAX_RADIUS = 140
 
 local MapManager = {
     CurrentMap = nil :: Model?,
     CurrentCoinContainer = nil :: Instance?,
-    RoundState = "WAITING" :: RoundState,
-    SafePlatform = nil :: BasePart?,
-    SafePosition = Vector3.new(0, -120, 0),
+    MapCFrame = CFrame.identity,
+    MapSize = Vector3.new(500, 200, 500),
+    RoundState = "Ожидание раунда" :: RussianRoundState,
+    SafeWaypoint = nil :: CFrame?,
     LobbyWaypoint = nil :: CFrame?,
+    _roundStartReceived = false,
+    _roundEndReceived = false,
     _maid = nil :: any,
     _onRoundStart = nil :: (() -> ())?,
     _onRoundEnd = nil :: (() -> ())?,
     _onMapChanged = nil :: ((map: Model?) -> ())?,
 }
 
--- Create an anchored invisible safe staging platform out of bounds
-function MapManager.EnsureSafePlatform(): BasePart
-    if MapManager.SafePlatform and MapManager.SafePlatform.Parent == Workspace then
-        return MapManager.SafePlatform
-    end
-
-    local part = Instance.new("Part")
-    part.Name = "MM2_SafeStagingPlatform"
-    part.Size = Vector3.new(128, 4, 128)
-    part.Position = MapManager.SafePosition
-    part.Anchored = true
-    part.CanCollide = true
-    part.Transparency = 1 -- Invisible to avoid visual obstruction
-    part.CastShadow = false
-    part.Parent = Workspace
-
-    MapManager.SafePlatform = part
-    return part
+-- Check if player is physically located in the MM2 Lobby
+function MapManager.IsPlayerInLobby(): boolean
+    local success, inLobby = pcall(function()
+        local char = LocalPlayer.Character
+        if not char then return true end
+        local hrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if not hrp then return true end
+        local dist = (hrp.Position - LOBBY_SPAWN_POSITION).Magnitude
+        return dist < LOBBY_MAX_RADIUS
+    end)
+    return (not success) or (inLobby == true)
 end
 
-function MapManager.RemoveSafePlatform()
-    if MapManager.SafePlatform then
-        pcall(function()
-            MapManager.SafePlatform:Destroy()
-        end)
-        MapManager.SafePlatform = nil
-    end
+-- Check if MM2 in-game timer GUI is visible
+function MapManager.IsTimerVisible(): boolean
+    local success, visible = pcall(function()
+        local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+        if not playerGui then return false end
+        local mainGui = playerGui:FindFirstChild("MainGUI")
+        if not mainGui then return false end
+        local gameFrame = mainGui:FindFirstChild("Game")
+        if not gameFrame then return false end
+        local timer = gameFrame:FindFirstChild("Timer")
+        if timer and timer:IsA("GuiObject") then
+            return timer.Visible == true
+        end
+        return false
+    end)
+    return success and visible == true
 end
 
--- Find the active MM2 map
+-- Check if MM2 LocalPlayer has attribute "Alive" == true
+function MapManager.IsPlayerAliveInRound(): boolean
+    local success, alive = pcall(function()
+        return LocalPlayer:GetAttribute("Alive") == true
+    end)
+    return success and alive == true
+end
+
+-- Find the active MM2 playable map (Model with CoinContainer or Spawns, excluding Lobby)
 function MapManager.FindActiveMap(): (Model?, Instance?)
-    -- Heuristic 1: Model with CoinContainer directly in Workspace
     for _, child in ipairs(Workspace:GetChildren()) do
         if child:IsA("Model") and child.Name ~= "Lobby" then
             local coinContainer = child:FindFirstChild("CoinContainer")
@@ -518,7 +605,6 @@ function MapManager.FindActiveMap(): (Model?, Instance?)
         end
     end
 
-    -- Heuristic 2: Model with Spawns folder and CoinContainer descendant
     for _, child in ipairs(Workspace:GetChildren()) do
         if child:IsA("Model") and child.Name ~= "Lobby" and child:FindFirstChild("Spawns") then
             local coinContainer = child:FindFirstChild("CoinContainer") or child:FindFirstChildWhichIsA("Folder")
@@ -532,7 +618,119 @@ function MapManager.FindActiveMap(): (Model?, Instance?)
     return nil, nil
 end
 
--- Save the player's lobby position to return to after farming
+-- Update map bounding box to prevent wandering outside playable zone
+function MapManager.UpdateMapBounds(map: Model)
+    pcall(function()
+        local cf, size = map:GetBoundingBox()
+        MapManager.MapCFrame = cf
+        MapManager.MapSize = size + Vector3.new(20, 30, 20) -- Slight safe buffer
+    end)
+end
+
+-- Validate that a position is strictly inside the playable map boundaries
+function MapManager.IsPositionInsideMap(targetPos: Vector3): boolean
+    -- Absolute sanity limits for MM2
+    if targetPos.Y < -20 or targetPos.Y > 140 then
+        return false
+    end
+
+    -- If player is in lobby, map position is invalid
+    if MapManager.IsPlayerInLobby() then
+        return false
+    end
+
+    local map = MapManager.CurrentMap
+    if not map then return false end
+
+    -- Check relative to map bounding box
+    local rel = MapManager.MapCFrame:PointToObjectSpace(targetPos)
+    local halfSize = MapManager.MapSize * 0.5
+    if math.abs(rel.X) > halfSize.X or math.abs(rel.Y) > halfSize.Y or math.abs(rel.Z) > halfSize.Z then
+        return false
+    end
+
+    return true
+end
+
+-- Evaluate current round state strictly (FAIL-CLOSED)
+function MapManager.EvaluateRoundState(): RussianRoundState
+    local map, coinContainer = MapManager.FindActiveMap()
+    MapManager.CurrentMap = map
+    MapManager.CurrentCoinContainer = coinContainer
+
+    if map then
+        MapManager.UpdateMapBounds(map)
+    end
+
+    -- Gate 1: No map or no CoinContainer = Ожидание раунда
+    if not map or not coinContainer then
+        MapManager._roundStartReceived = false
+        return "Ожидание раунда"
+    end
+
+    -- Gate 2: Server explicitly fired RoundEndFade = Раунд завершён
+    if MapManager._roundEndReceived then
+        return "Раунд завершён"
+    end
+
+    -- Gate 3: Player is physically located in the Lobby = Ожидание раунда
+    if MapManager.IsPlayerInLobby() then
+        return "Ожидание раунда"
+    end
+
+    -- Positive Gate 1: Server fired RoundStart remote event and round hasn't ended
+    if MapManager._roundStartReceived and not MapManager._roundEndReceived then
+        if MapManager.IsPlayerAliveInRound() or MapManager.IsTimerVisible() then
+            return "Раунд начался"
+        end
+        if LocalPlayer:GetAttribute("Alive") == false then
+            return "Раунд завершён"
+        end
+        return "Раунд начался"
+    end
+
+    -- Positive Gate 2: Joining mid-round verification
+    local playerAlive = MapManager.IsPlayerAliveInRound()
+    local timerVisible = MapManager.IsTimerVisible()
+
+    if playerAlive and timerVisible then
+        return "Раунд начался"
+    end
+
+    if not playerAlive then
+        return "Ожидание раунда"
+    end
+
+    return "Ожидание раунда"
+end
+
+-- Check if round is confirmed ACTIVE (Fail-Closed)
+function MapManager.IsRoundActive(): boolean
+    local state = MapManager.EvaluateRoundState()
+    MapManager.RoundState = state
+    return (state == "Раунд начался" or state == "Сбор конфет")
+end
+
+function MapManager.GetRoundState(): RussianRoundState
+    return MapManager.EvaluateRoundState()
+end
+
+-- Find safe resting point inside map (spawn point) rather than falling into the void
+function MapManager.GetSafeMapPosition(): Vector3?
+    local map = MapManager.CurrentMap
+    if not map then return nil end
+
+    local spawns = map:FindFirstChild("Spawns")
+    if spawns then
+        local firstSpawn = spawns:FindFirstChildWhichIsA("BasePart")
+        if firstSpawn then
+            return firstSpawn.Position + Vector3.new(0, 3, 0)
+        end
+    end
+
+    return MapManager.MapCFrame.Position + Vector3.new(0, 5, 0)
+end
+
 function MapManager.RecordLobbyWaypoint()
     pcall(function()
         local char = LocalPlayer.Character
@@ -545,30 +743,41 @@ function MapManager.RecordLobbyWaypoint()
     end)
 end
 
-function MapManager.TeleportToSafePlatform(character: Model?): boolean
+function MapManager.ParkInSafeSpot(character: Model?): boolean
     local char = character or LocalPlayer.Character
     if not char then return false end
-
     local hrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?
     if not hrp then return false end
 
-    MapManager.EnsureSafePlatform()
-    hrp.CFrame = CFrame.new(MapManager.SafePosition + Vector3.new(0, 5, 0))
-    hrp.AssemblyLinearVelocity = Vector3.zero
-    return true
+    local safePos = MapManager.GetSafeMapPosition()
+    if safePos then
+        hrp.CFrame = CFrame.new(safePos)
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        return true
+    elseif MapManager.LobbyWaypoint then
+        hrp.CFrame = MapManager.LobbyWaypoint
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        return true
+    end
+    return false
 end
 
-function MapManager.TeleportToLobbyWaypoint(character: Model?): boolean
-    if not MapManager.LobbyWaypoint then return false end
-    local char = character or LocalPlayer.Character
-    if not char then return false end
+function MapManager.EnsureSafePlatform(): BasePart
+    local part = Instance.new("Part")
+    part.Name = "MM2_SafeStagingPlatform"
+    part.Size = Vector3.new(32, 2, 32)
+    part.Anchored = true
+    part.CanCollide = true
+    part.Transparency = 1
+    return part
+end
 
-    local hrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?
-    if not hrp then return false end
+function MapManager.TeleportToSafePlatform(): boolean
+    return MapManager.ParkInSafeSpot()
+end
 
-    hrp.CFrame = MapManager.LobbyWaypoint
-    hrp.AssemblyLinearVelocity = Vector3.zero
-    return true
+function MapManager.RemoveSafePlatform()
+    -- Safe parking uses in-engine map spawns/geometry; no cleanup needed
 end
 
 -- Initialize lifecycle listeners
@@ -582,7 +791,11 @@ function MapManager.Init(maid: any, callbacks: {
     MapManager._onRoundEnd = callbacks.OnRoundEnd
     MapManager._onMapChanged = callbacks.OnMapChanged
 
-    -- Listen to MM2 Gameplay remotes if present
+    MapManager.RoundState = "Ожидание раунда"
+    MapManager._roundStartReceived = false
+    MapManager._roundEndReceived = false
+
+    -- Listen to MM2 Gameplay remotes
     pcall(function()
         local remotes = ReplicatedStorage:FindFirstChild("Remotes")
         if remotes then
@@ -591,7 +804,9 @@ function MapManager.Init(maid: any, callbacks: {
                 local roundStart = gameplay:FindFirstChild("RoundStart") :: RemoteEvent?
                 if roundStart and roundStart:IsA("RemoteEvent") then
                     maid:GiveTask(roundStart.OnClientEvent:Connect(function()
-                        MapManager.RoundState = "ROUND_ACTIVE"
+                        MapManager._roundStartReceived = true
+                        MapManager._roundEndReceived = false
+                        MapManager.RoundState = "Раунд начался"
                         if MapManager._onRoundStart then
                             MapManager._onRoundStart()
                         end
@@ -601,7 +816,9 @@ function MapManager.Init(maid: any, callbacks: {
                 local roundEnd = gameplay:FindFirstChild("RoundEndFade") :: RemoteEvent?
                 if roundEnd and roundEnd:IsA("RemoteEvent") then
                     maid:GiveTask(roundEnd.OnClientEvent:Connect(function()
-                        MapManager.RoundState = "ROUND_ENDED"
+                        MapManager._roundStartReceived = false
+                        MapManager._roundEndReceived = true
+                        MapManager.RoundState = "Раунд завершён"
                         if MapManager._onRoundEnd then
                             MapManager._onRoundEnd()
                         end
@@ -611,7 +828,20 @@ function MapManager.Init(maid: any, callbacks: {
         end
     end)
 
-    -- Monitor Workspace child additions/removals for map transitions
+    -- Listen to Player "Alive" attribute changes
+    pcall(function()
+        maid:GiveTask(LocalPlayer:GetAttributeChangedSignal("Alive"):Connect(function()
+            local isAlive = LocalPlayer:GetAttribute("Alive") == true
+            if not isAlive and (MapManager.RoundState == "Раунд начался" or MapManager.RoundState == "Сбор конфет") then
+                MapManager.RoundState = "Раунд завершён"
+                if MapManager._onRoundEnd then
+                    MapManager._onRoundEnd()
+                end
+            end
+        end))
+    end)
+
+    -- Monitor Workspace map transitions
     maid:GiveTask(Workspace.ChildAdded:Connect(function(child)
         if child:IsA("Model") and child.Name ~= "Lobby" then
             task.delay(0.5, function()
@@ -619,6 +849,9 @@ function MapManager.Init(maid: any, callbacks: {
                 if map ~= MapManager.CurrentMap then
                     MapManager.CurrentMap = map
                     MapManager.CurrentCoinContainer = coinContainer
+                    if map then
+                        MapManager.UpdateMapBounds(map)
+                    end
                     if MapManager._onMapChanged then
                         MapManager._onMapChanged(map)
                     end
@@ -631,7 +864,9 @@ function MapManager.Init(maid: any, callbacks: {
         if child == MapManager.CurrentMap then
             MapManager.CurrentMap = nil
             MapManager.CurrentCoinContainer = nil
-            MapManager.RoundState = "ROUND_ENDED"
+            MapManager._roundStartReceived = false
+            MapManager._roundEndReceived = true
+            MapManager.RoundState = "Раунд завершён"
             if MapManager._onMapChanged then
                 MapManager._onMapChanged(nil)
             end
@@ -641,13 +876,8 @@ function MapManager.Init(maid: any, callbacks: {
         end
     end))
 
-    -- Initial discovery
-    local map, coinContainer = MapManager.FindActiveMap()
-    MapManager.CurrentMap = map
-    MapManager.CurrentCoinContainer = coinContainer
-    if map then
-        MapManager.RoundState = "ROUND_ACTIVE"
-    end
+    -- Initial evaluation (Strictly fail-closed: never start as ACTIVE in lobby)
+    MapManager.RoundState = MapManager.EvaluateRoundState()
 end
 
 return MapManager
@@ -656,15 +886,16 @@ return MapManager
 
         -- MODULE 7: Candy & Coin Detector
         local CandyDetector = (function()
--- CandyDetector.luau: High-Performance MM2 Candy & Coin Detection
--- Finds collectible seasonal candies, sorts by distance, and maintains blacklists
+-- CandyDetector.luau: Validated MM2 Candy Detection & Boundary Guard
+-- Validates targets against map boundaries, active TouchInterest, and collection state
 
 local CandyDetector = {
-    Blacklist = {} :: { [Instance]: number }, -- [coinInstance] = expiryTimestamp
-    CoinTypeFilter = "Candy",                  -- Target event currency ("Candy", "Coin", or "All")
+    Blacklist = {} :: { [Instance]: number },
+    CoinTypeFilter = "Candy",
+    FailCounts = {} :: { [Instance]: number },
 }
 
--- Check if an instance is a valid, active collectible candy
+-- Check if an instance is a valid, currently collectible candy
 function CandyDetector.IsValidCandy(obj: Instance, coinTypeFilter: string?): boolean
     if not obj or not obj.Parent then return false end
     if not (obj:IsA("BasePart") or obj:IsA("Model")) then return false end
@@ -678,7 +909,6 @@ function CandyDetector.IsValidCandy(obj: Instance, coinTypeFilter: string?): boo
     -- 1. Check for TouchInterest / TouchTransmitter
     local touchInterest = obj:FindFirstChildWhichIsA("TouchTransmitter") or obj:FindFirstChild("TouchInterest")
     if not touchInterest then
-        -- In some versions TouchInterest is inside a child part
         local innerTouch = obj:FindFirstChild("CoinVisual") and obj.CoinVisual:FindFirstChildWhichIsA("TouchTransmitter")
         if not innerTouch then
             return false
@@ -703,7 +933,7 @@ function CandyDetector.IsValidCandy(obj: Instance, coinTypeFilter: string?): boo
     return true
 end
 
--- Resolve the BasePart position of a candy target
+-- Resolve the BasePart target of a candy
 function CandyDetector.GetTargetPart(candy: Instance): BasePart?
     if candy:IsA("BasePart") then
         return candy
@@ -713,17 +943,36 @@ function CandyDetector.GetTargetPart(candy: Instance): BasePart?
     return nil
 end
 
--- Find all currently valid candies in the active container
-function CandyDetector.GetCandies(coinContainer: Instance?, coinTypeFilter: string?): { BasePart }
+-- Find all currently valid candies inside map boundaries
+function CandyDetector.GetCandies(
+    coinContainer: Instance?,
+    filterOrBoundaryFn: (string | ((Vector3) -> boolean))?,
+    boundaryFn: ((Vector3) -> boolean)?
+): { BasePart }
     local result = {}
     if not coinContainer then return result end
 
-    local filter = coinTypeFilter or CandyDetector.CoinTypeFilter
+    local filter: string? = nil
+    local isPositionValidFn: ((Vector3) -> boolean)? = nil
+
+    if typeof(filterOrBoundaryFn) == "string" then
+        filter = filterOrBoundaryFn
+        isPositionValidFn = boundaryFn
+    elseif typeof(filterOrBoundaryFn) == "function" then
+        isPositionValidFn = filterOrBoundaryFn
+    end
+
+    local activeFilter = filter or CandyDetector.CoinTypeFilter
+
     for _, item in ipairs(coinContainer:GetChildren()) do
-        if CandyDetector.IsValidCandy(item, filter) then
+        if CandyDetector.IsValidCandy(item, activeFilter) then
             local part = CandyDetector.GetTargetPart(item)
             if part then
-                table.insert(result, part)
+                -- Spatial boundary validation: Reject any coin outside the map
+                local isValidPos = (not isPositionValidFn) or isPositionValidFn(part.Position)
+                if isValidPos then
+                    table.insert(result, part)
+                end
             end
         end
     end
@@ -731,9 +980,14 @@ function CandyDetector.GetCandies(coinContainer: Instance?, coinTypeFilter: stri
     return result
 end
 
--- Find the closest valid candy using squared distance (O(1) sqrt-free)
-function CandyDetector.GetClosestCandy(coinContainer: Instance?, playerPos: Vector3, coinTypeFilter: string?): (BasePart?, number)
-    local candidates = CandyDetector.GetCandies(coinContainer, coinTypeFilter)
+-- Find the closest valid candy using squared distance
+function CandyDetector.GetClosestCandy(
+    coinContainer: Instance?,
+    playerPos: Vector3,
+    filterOrBoundaryFn: (string | ((Vector3) -> boolean))?,
+    boundaryFn: ((Vector3) -> boolean)?
+): (BasePart?, number)
+    local candidates = CandyDetector.GetCandies(coinContainer, filterOrBoundaryFn, boundaryFn)
     if #candidates == 0 then
         return nil, math.huge
     end
@@ -754,24 +1008,38 @@ function CandyDetector.GetClosestCandy(coinContainer: Instance?, playerPos: Vect
     return bestPart, realDist
 end
 
--- Temporarily blacklist a coin that caused a timeout or stall
+-- Register a failed pickup attempt; blacklists if failed repeatedly
+function CandyDetector.RecordFailedPickup(coin: Instance, maxRetries: number?): boolean
+    local limit = maxRetries or 2
+    local count = (CandyDetector.FailCounts[coin] or 0) + 1
+    CandyDetector.FailCounts[coin] = count
+
+    if count >= limit then
+        CandyDetector.Blacklist[coin] = os.clock() + 15 -- Blacklist for 15s
+        CandyDetector.FailCounts[coin] = nil
+        return true -- Triggered permanent blacklist for this cycle
+    end
+    return false
+end
+
 function CandyDetector.BlacklistCoin(coin: Instance, durationSeconds: number?)
-    local duration = durationSeconds or 12
+    local duration = durationSeconds or 15
     CandyDetector.Blacklist[coin] = os.clock() + duration
 end
 
--- Clear expired blacklists to free memory
 function CandyDetector.PruneBlacklist()
     local now = os.clock()
     for coin, expiry in pairs(CandyDetector.Blacklist) do
         if now >= expiry or not coin.Parent then
             CandyDetector.Blacklist[coin] = nil
+            CandyDetector.FailCounts[coin] = nil
         end
     end
 end
 
 function CandyDetector.ClearBlacklist()
     table.clear(CandyDetector.Blacklist)
+    table.clear(CandyDetector.FailCounts)
 end
 
 return CandyDetector
@@ -780,42 +1048,67 @@ return CandyDetector
 
         -- MODULE 8: Movement Engine
         local Movement = (function()
--- Movement.luau: Robust MM2 Character Movement & Anti-Stuck Controller
--- Provides TweenService, Step-Lerp, and BodyVelocity flight with safe cancellation
+-- Movement.luau: Continuous Frame-Rate-Independent Movement & Reliable Candy Pickup
+-- Mimics natural player traversal with RunService.Heartbeat interpolation, zero velocity spikes,
+-- pre-physics noclip on Stepped, and observable tri-signal collection confirmation.
 
-local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 
 local LocalPlayer = Players.LocalPlayer
+while not LocalPlayer do
+    task.wait(0.1)
+    LocalPlayer = Players.LocalPlayer
+end
 
 local Movement = {
-    ActiveTween = nil :: Tween?,
-    ActiveBodyVelocity = nil :: BodyVelocity?,
-    ActiveBodyGyro = nil :: BodyGyro?,
     IsMoving = false,
     NoclipEnabled = false,
     _noclipConnection = nil :: RBXScriptConnection?,
-    _stuckTimer = 0,
-    _lastPosition = Vector3.zero,
+    _heartbeatConnection = nil :: RBXScriptConnection?,
+    _cachedColliders = {} :: { BasePart },
 }
 
--- Enable or disable Noclip on the local character
+local function RefreshColliders(char: Model)
+    table.clear(Movement._cachedColliders)
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then
+            table.insert(Movement._cachedColliders, part)
+        end
+    end
+end
+
+-- Pre-physics collision override on Stepped (before PGS physics solver evaluates penetration)
+local function ApplyNoclip()
+    if not Movement.NoclipEnabled then return end
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    for _, part in ipairs(Movement._cachedColliders) do
+        if part and part.Parent and part.CanCollide then
+            part.CanCollide = false
+        end
+    end
+
+    local humanoid = char:FindFirstChildWhichIsA("Humanoid")
+    if humanoid and humanoid:GetState() ~= Enum.HumanoidStateType.Physics then
+        humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+    end
+
+    local hrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?
+    if hrp then
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+    end
+end
+
 function Movement.SetNoclip(enabled: boolean)
     Movement.NoclipEnabled = enabled
     if enabled then
         if not Movement._noclipConnection then
-            Movement._noclipConnection = RunService.Stepped:Connect(function()
-                if not Movement.NoclipEnabled then return end
-                local char = LocalPlayer.Character
-                if char then
-                    for _, part in ipairs(char:GetDescendants()) do
-                        if part:IsA("BasePart") and part.CanCollide then
-                            part.CanCollide = false
-                        end
-                    end
-                end
-            end)
+            local char = LocalPlayer.Character
+            if char then RefreshColliders(char) end
+            Movement._noclipConnection = RunService.Stepped:Connect(ApplyNoclip)
         end
     else
         if Movement._noclipConnection then
@@ -825,161 +1118,308 @@ function Movement.SetNoclip(enabled: boolean)
         local char = LocalPlayer.Character
         if char then
             for _, part in ipairs(char:GetDescendants()) do
-                if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                if part:IsA("BasePart") and (part.Name == "Torso" or part.Name == "UpperTorso" or part.Name == "Head") then
                     part.CanCollide = true
                 end
+            end
+            local humanoid = char:FindFirstChildWhichIsA("Humanoid")
+            if humanoid then
+                humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
             end
         end
     end
 end
 
--- Fire touch interest if executor supports it
-function Movement.TouchTarget(hrp: BasePart, targetPart: BasePart)
+-- Fire touch interest if executor supports it across multiple character limbs
+function Movement.TouchTarget(char: Model, hrp: BasePart, targetPart: BasePart)
     local fireTouch = (getgenv and getgenv().firetouchinterest) or (_G and _G.firetouchinterest)
     if type(fireTouch) == "function" then
         pcall(function()
             fireTouch(hrp, targetPart, 0)
-            task.wait(0.02)
             fireTouch(hrp, targetPart, 1)
+
+            local innerVisual = targetPart:FindFirstChild("CoinVisual")
+            if innerVisual and innerVisual:IsA("BasePart") then
+                fireTouch(hrp, innerVisual, 0)
+                fireTouch(hrp, innerVisual, 1)
+            end
+
+            local leftLeg = char:FindFirstChild("LeftLeg") or char:FindFirstChild("LeftLowerLeg")
+            if leftLeg and leftLeg:IsA("BasePart") then
+                fireTouch(leftLeg, targetPart, 0)
+                fireTouch(leftLeg, targetPart, 1)
+            end
+
+            local rightLeg = char:FindFirstChild("RightLeg") or char:FindFirstChild("RightLowerLeg")
+            if rightLeg and rightLeg:IsA("BasePart") then
+                fireTouch(rightLeg, targetPart, 0)
+                fireTouch(rightLeg, targetPart, 1)
+            end
         end)
     end
 end
 
--- Cancel any active movement immediately and restore physics
+-- Check if candy was observably collected by MM2 game engine
+function Movement.IsCoinCollected(targetPart: Instance): boolean
+    if not targetPart or not targetPart.Parent then
+        return true
+    end
+
+    local touchTransmitter = targetPart:FindFirstChildWhichIsA("TouchTransmitter") or targetPart:FindFirstChild("TouchInterest")
+    if not touchTransmitter then
+        local innerTouch = targetPart:FindFirstChild("CoinVisual") and targetPart.CoinVisual:FindFirstChildWhichIsA("TouchTransmitter")
+        if not innerTouch then
+            return true
+        end
+    end
+
+    local coinVisual = targetPart:FindFirstChild("CoinVisual")
+    if coinVisual and coinVisual:GetAttribute("Collected") == true then
+        return true
+    end
+
+    return false
+end
+
+-- Cancel any active movement immediately, zero velocities, and restore physics
 function Movement.Cancel()
     Movement.IsMoving = false
 
-    if Movement.ActiveTween then
-        pcall(function()
-            Movement.ActiveTween:Cancel()
-        end)
-        Movement.ActiveTween = nil
-    end
-
-    if Movement.ActiveBodyVelocity then
-        pcall(function()
-            Movement.ActiveBodyVelocity:Destroy()
-        end)
-        Movement.ActiveBodyVelocity = nil
-    end
-
-    if Movement.ActiveBodyGyro then
-        pcall(function()
-            Movement.ActiveBodyGyro:Destroy()
-        end)
-        Movement.ActiveBodyGyro = nil
+    if Movement._heartbeatConnection then
+        Movement._heartbeatConnection:Disconnect()
+        Movement._heartbeatConnection = nil
     end
 
     local char = LocalPlayer.Character
     if char then
-        local humanoid = char:FindFirstChildWhichIsA("Humanoid")
-        if humanoid then
-            humanoid.PlatformStand = false
-        end
         local hrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?
         if hrp then
             hrp.AssemblyLinearVelocity = Vector3.zero
             hrp.AssemblyAngularVelocity = Vector3.zero
         end
+        local humanoid = char:FindFirstChildWhichIsA("Humanoid")
+        if humanoid then
+            humanoid.PlatformStand = false
+        end
     end
 end
 
--- Move to target position using configured method with timeout guard
-function Movement.MoveTo(targetPosition: Vector3, speed: number, method: string?, timeoutGuard: number?): boolean
+-- Micro-nudge perturbation to force touch overlap if coin event didn't trigger
+function Movement.MicroNudge(amplitude: number?)
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?
+    if not hrp then return end
+
+    local amp = amplitude or 0.35
+    local originalCFrame = hrp.CFrame
+    hrp.CFrame = originalCFrame + Vector3.new(0, amp, 0)
+    task.wait(0.04)
+    if hrp and hrp.Parent then
+        hrp.CFrame = originalCFrame
+        hrp.AssemblyLinearVelocity = Vector3.zero
+    end
+end
+
+-- Continuous frame-rate-independent movement toward target and verify observable collection
+function Movement.MoveToAndCollect(
+    targetPart: BasePart,
+    speed: number,
+    method: string?,
+    isRoundActiveFn: (() -> boolean)?
+): (boolean, string)
     Movement.Cancel()
 
+    -- Fail-closed check: abort if round not active
+    if isRoundActiveFn and not isRoundActiveFn() then
+        return false, "Ожидание раунда"
+    end
+
     local char = LocalPlayer.Character
-    if not char then return false end
+    if not char then return false, "Ошибка" end
 
     local hrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?
     local humanoid = char:FindFirstChildWhichIsA("Humanoid")
-    if not hrp or not humanoid or humanoid.Health <= 0 then return false end
+    if not hrp or not humanoid or humanoid.Health <= 0 then return false, "Ошибка" end
 
-    local startPos = hrp.Position
-    local distance = (targetPosition - startPos).Magnitude
-    if distance < 1.5 then
-        return true
+    if not targetPart or not targetPart.Parent then
+        return false, "Цель недоступна"
     end
 
-    local effectiveSpeed = math.clamp(speed or 32, 10, 80)
+    local targetPos = targetPart.Position
+    local startPos = hrp.Position
+    local distance = (targetPos - startPos).Magnitude
+
+    local effectiveSpeed = math.clamp(speed or 28, 12, 45)
     local duration = distance / effectiveSpeed
-    local maxAllowedTime = timeoutGuard or (duration + 1.2)
+    local maxAllowedTime = duration + 1.5
 
     Movement.IsMoving = true
-    local chosenMethod = method or "Tween"
+    RefreshColliders(char)
 
-    if chosenMethod == "Instant" then
-        hrp.CFrame = CFrame.new(targetPosition + Vector3.new(0, 1.5, 0))
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        Movement.IsMoving = false
-        return true
-    end
-
-    -- Method: TweenService
-    if chosenMethod == "Tween" then
-        humanoid:ChangeState(Enum.HumanoidStateType.Physics)
-        local targetCFrame = CFrame.new(targetPosition + Vector3.new(0, 1.5, 0))
-        local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
-        local tw = TweenService:Create(hrp, tweenInfo, { CFrame = targetCFrame })
-        Movement.ActiveTween = tw
-        tw:Play()
-
-        local startTime = os.clock()
-        local lastPos = hrp.Position
-        local lastMoveCheck = startTime
-
-        while Movement.IsMoving and tw.PlaybackState == Enum.PlaybackState.Playing do
-            task.wait(0.05)
-            local now = os.clock()
-
-            -- Timeout guard
-            if (now - startTime) > maxAllowedTime then
-                Movement.Cancel()
-                return false
-            end
-
-            -- Anti-stuck watchdog: check if distance moved in last 1.5s is < 1.0 stud
-            if (now - lastMoveCheck) > 1.5 then
-                local moved = (hrp.Position - lastPos).Magnitude
-                if moved < 1.0 and distance > 5.0 then
-                    Movement.Cancel()
-                    return false
-                end
-                lastPos = hrp.Position
-                lastMoveCheck = now
-            end
-        end
-
-        Movement.IsMoving = false
-        return (tw.PlaybackState == Enum.PlaybackState.Completed)
-    end
-
-    -- Method: Step-Lerp (Heartbeat)
+    -- Continuous frame-rate-independent navigation loop (Heartbeat)
     local startTime = os.clock()
-    local targetCFrame = CFrame.new(targetPosition + Vector3.new(0, 1.5, 0))
-    local completed = false
+    local lastPos = hrp.Position
+    local lastMoveCheck = startTime
+    local arrived = false
 
-    while Movement.IsMoving do
-        local dt = RunService.Heartbeat:Wait()
-        local elapsed = os.clock() - startTime
-        local alpha = math.clamp(elapsed / duration, 0, 1)
+    local movePromise = coroutine.running()
 
-        char:PivotTo(CFrame.new(startPos:Lerp(targetPosition, alpha)))
-
-        if alpha >= 1 then
-            completed = true
-            break
+    Movement._heartbeatConnection = RunService.Heartbeat:Connect(function(dt: number)
+        if not Movement.IsMoving then
+            if Movement._heartbeatConnection then
+                Movement._heartbeatConnection:Disconnect()
+                Movement._heartbeatConnection = nil
+            end
+            return
         end
 
-        if elapsed > maxAllowedTime then
+        -- Check round state continuously
+        if isRoundActiveFn and not isRoundActiveFn() then
             Movement.Cancel()
-            return false
+            coroutine.resume(movePromise, false, "Ожидание раунда")
+            return
+        end
+
+        -- Check target validity mid-flight
+        if not targetPart or not targetPart.Parent then
+            Movement.Cancel()
+            coroutine.resume(movePromise, false, "Цель недоступна")
+            return
+        end
+
+        local curHrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if not curHrp then
+            Movement.Cancel()
+            coroutine.resume(movePromise, false, "Ошибка")
+            return
+        end
+
+        local curPos = curHrp.Position
+        local delta = targetPart.Position - curPos
+        local dist = delta.Magnitude
+
+        -- Arrival condition (< 0.8 studs)
+        if dist <= 0.8 then
+            arrived = true
+            curHrp.CFrame = targetPart.CFrame
+            curHrp.AssemblyLinearVelocity = Vector3.zero
+            curHrp.AssemblyAngularVelocity = Vector3.zero
+            Movement.Cancel()
+            coroutine.resume(movePromise, true, "Достигнуто")
+            return
+        end
+
+        -- Timeout check
+        local now = os.clock()
+        if (now - startTime) > maxAllowedTime then
+            Movement.Cancel()
+            coroutine.resume(movePromise, false, "Таймаут движения")
+            return
+        end
+
+        -- Anti-stuck progress check
+        if (now - lastMoveCheck) > 0.8 then
+            local moved = (curPos - lastPos).Magnitude
+            if moved < 0.8 and dist > 2.5 then
+                Movement.Cancel()
+                coroutine.resume(movePromise, false, "Застревание")
+                return
+            end
+            lastPos = curPos
+            lastMoveCheck = now
+        end
+
+        -- Frame-rate independent step integration: step = Speed * dt
+        local stepDist = math.min(effectiveSpeed * dt, dist)
+        local moveDir = delta.Unit
+        local nextPos = curPos + (moveDir * stepDist)
+
+        -- Face naturally in movement direction on horizontal plane
+        local flatDir = Vector3.new(moveDir.X, 0, moveDir.Z)
+        local nextCFrame: CFrame
+        if flatDir.Magnitude > 0.001 then
+            nextCFrame = CFrame.lookAlong(nextPos, flatDir.Unit, Vector3.yAxis)
+        else
+            nextCFrame = CFrame.new(nextPos)
+        end
+
+        curHrp.CFrame = nextCFrame
+        curHrp.AssemblyLinearVelocity = Vector3.zero
+        curHrp.AssemblyAngularVelocity = Vector3.zero
+    end)
+
+    local navSuccess, navReason = coroutine.yield()
+    if not navSuccess then
+        return false, navReason or "Ошибка навигации"
+    end
+
+    -- 2. Execute verified pickup interaction
+    -- Position character directly overlapping the coin CFrame
+    hrp.CFrame = targetPart.CFrame
+    Movement.TouchTarget(char, hrp, targetPart)
+
+    -- Ultra-fast observable collection check (check every 0.02s up to 0.12s)
+    local waitStart = os.clock()
+    while (os.clock() - waitStart) < 0.12 do
+        if Movement.IsCoinCollected(targetPart) then
+            return true, "Собираю конфеты"
+        end
+        task.wait(0.02)
+    end
+
+    -- 3. Retry with micro-nudge if not yet collected (quick 0.08s jolt)
+    if not Movement.IsCoinCollected(targetPart) then
+        Movement.MicroNudge(0.35)
+        Movement.TouchTarget(char, hrp, targetPart)
+        local retryStart = os.clock()
+        while (os.clock() - retryStart) < 0.08 do
+            if Movement.IsCoinCollected(targetPart) then
+                return true, "Собираю конфеты"
+            end
+            task.wait(0.02)
         end
     end
 
-    Movement.IsMoving = false
-    hrp.AssemblyLinearVelocity = Vector3.zero
-    return completed
+    if Movement.IsCoinCollected(targetPart) then
+        return true, "Собираю конфеты"
+    else
+        return false, "Конфета не подобрана"
+    end
+end
+
+-- Backwards-compatible MoveTo alias
+function Movement.MoveTo(
+    target: BasePart | Vector3,
+    speed: number,
+    method: string?,
+    isRoundActiveFn: (() -> boolean)?
+): (boolean, string)
+    if typeof(target) == "Vector3" then
+        local char = LocalPlayer.Character
+        if not char then return false, "Ошибка" end
+        local hrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?
+        if not hrp then return false, "Ошибка" end
+        hrp.CFrame = CFrame.new(target)
+        return true, "Перемещено"
+    else
+        return Movement.MoveToAndCollect(target, speed, method, isRoundActiveFn)
+    end
+end
+
+-- Respawn handling
+LocalPlayer.CharacterAdded:Connect(function(char)
+    Movement.Cancel()
+    RefreshColliders(char)
+    char.DescendantAdded:Connect(function(descendant)
+        if descendant:IsA("BasePart") then
+            table.insert(Movement._cachedColliders, descendant)
+        end
+    end)
+end)
+
+if LocalPlayer.Character then
+    RefreshColliders(LocalPlayer.Character)
 end
 
 return Movement
@@ -988,14 +1428,18 @@ return Movement
 
         -- MODULE 9: Farm Engine Orchestrator
         local FarmEngine = (function()
--- FarmEngine.luau: Central MM2 Candy Farm Orchestrator & State Machine
--- Handles task execution, candy collection, map transitions, respawns, and metrics
+-- FarmEngine.luau: Central MM2 Candy Farm Orchestrator & State Machine (Fail-Closed)
+-- Strictly prevents any movement in lobby, intermission, voting, or inactive rounds.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local LocalPlayer = Players.LocalPlayer
+while not LocalPlayer do
+    task.wait(0.1)
+    LocalPlayer = Players.LocalPlayer
+end
 
 local FarmEngine = {
     IsRunning = false,
@@ -1023,7 +1467,6 @@ local function ReadBagFromGui(): (number?, number?)
         local container = coinBags:FindFirstChild("Container")
         if not container then return nil, nil end
 
-        -- Look for Candy or SnowToken or Coin
         local candyBag = container:FindFirstChild("Candy") or container:FindFirstChild("Coin") or container:FindFirstChildWhichIsA("Frame")
         if not candyBag then return nil, nil end
 
@@ -1060,21 +1503,36 @@ function FarmEngine.Init(uiUpdateCallback: ((metrics: any) -> ())?)
         end
     end
 
-    -- Setup MapManager lifecycle
+    -- Setup MapManager lifecycle with strict fail-closed callbacks
     MapManager.Init(FarmEngine._maid, {
         OnRoundStart = function()
             if FarmEngine.IsRunning then
-                State.SetStatus("SCANNING", "Round started! Scanning map...")
-                FarmEngine.WakeLoop()
+                task.wait(0.5) -- Allow player spawn to replicate
+                if MapManager.IsRoundActive() then
+                    if State.Config.Noclip then
+                        Movement.SetNoclip(true)
+                    end
+                    State.SetStatus("SCANNING", "Раунд начался! Поиск конфет...")
+                    FarmEngine.WakeLoop()
+                else
+                    Movement.Cancel()
+                    Movement.SetNoclip(false)
+                    State.SetStatus("WAITING_MAP", "Ожидание начала раунда...")
+                end
             end
         end,
         OnRoundEnd = function()
             FarmEngine._roundsFarmed += 1
             State.IncrementRounds()
+
+            -- Immediately halt all movement and restore normal collisions
+            Movement.Cancel()
+            Movement.SetNoclip(false)
+            FarmEngine._activeTarget = nil
+            State.SetDistance(0)
+
             if FarmEngine.IsRunning then
-                Movement.Cancel()
-                Movement.SetNoclip(false)
-                State.SetStatus("ROUND_OVER", "Round ended! Waiting for intermission...")
+                State.SetStatus("ROUND_OVER", "Раунд завершён, пауза...")
                 if State.Config.SafeSpotOnFull then
                     MapManager.TeleportToSafePlatform()
                 end
@@ -1083,14 +1541,18 @@ function FarmEngine.Init(uiUpdateCallback: ((metrics: any) -> ())?)
         OnMapChanged = function(map)
             if map then
                 State.SetMap(map.Name)
-                if FarmEngine.IsRunning then
-                    State.SetStatus("SCANNING", "Map loaded: " .. map.Name)
-                    FarmEngine.WakeLoop()
-                end
             else
                 State.SetMap("None")
-                if FarmEngine.IsRunning then
-                    State.SetStatus("WAITING_MAP", "Waiting for active map...")
+            end
+
+            if FarmEngine.IsRunning then
+                if MapManager.IsRoundActive() then
+                    State.SetStatus("SCANNING", "Карта подтверждена: " .. (map and map.Name or "Игра"))
+                    FarmEngine.WakeLoop()
+                else
+                    Movement.Cancel()
+                    Movement.SetNoclip(false)
+                    State.SetStatus("WAITING_MAP", "Ожидание начала раунда...")
                 end
             end
         end,
@@ -1130,14 +1592,19 @@ function FarmEngine.Init(uiUpdateCallback: ((metrics: any) -> ())?)
 
     -- Character Added (Respawn Recovery)
     FarmEngine._maid:GiveTask(LocalPlayer.CharacterAdded:Connect(function(char)
-        task.wait(1.0) -- Allow character parts to replicate
+        task.wait(1.0)
         if FarmEngine.IsRunning and State.Config.AutoResumeOnRespawn then
             Movement.Cancel()
-            if State.Config.Noclip then
-                Movement.SetNoclip(true)
+            if MapManager.IsRoundActive() then
+                if State.Config.Noclip then
+                    Movement.SetNoclip(true)
+                end
+                State.SetStatus("SCANNING", "Персонаж возрождён! Возобновление сбора...")
+                FarmEngine.WakeLoop()
+            else
+                Movement.SetNoclip(false)
+                State.SetStatus("WAITING_MAP", "Возрождение в лобби. Ожидание раунда...")
             end
-            State.SetStatus("SCANNING", "Respawned! Resuming candy farm...")
-            FarmEngine.WakeLoop()
         end
     end))
 
@@ -1160,13 +1627,19 @@ function FarmEngine.BroadcastMetrics()
     local currentBag = State.CandiesInBag
     local maxBag = State.BagCapacity
 
-    -- Fallback bag reading from GUI if 0
     if currentBag == 0 then
         local guiCur, _ = ReadBagFromGui()
         if guiCur and guiCur > 0 then
             currentBag = guiCur
             State.UpdateBag(guiCur, maxBag)
         end
+    end
+
+    local roundDisplayName = "Не начался"
+    if MapManager.IsRoundActive() then
+        roundDisplayName = (State.ActiveMapName and State.ActiveMapName ~= "None") and State.ActiveMapName or "Идёт бой"
+    elseif MapManager.GetRoundState() == "Раунд завершён" then
+        roundDisplayName = "Завершён"
     end
 
     FarmEngine._uiCallback({
@@ -1176,8 +1649,12 @@ function FarmEngine.BroadcastMetrics()
         roundsFarmed = FarmEngine._roundsFarmed,
         elapsedSeconds = elapsed,
         mapName = State.ActiveMapName,
+        roundName = roundDisplayName,
         targetDistance = State.CurrentTargetDistance,
         cpm = cpm,
+        statusTitle = State.GetRussianStatusTitle(),
+        diagnosticMessage = State.StatusMessage,
+        fps = Performance.GetRealFPS(),
     })
 end
 
@@ -1185,7 +1662,9 @@ end
 function FarmEngine.HandleBagFull()
     Movement.Cancel()
     Movement.SetNoclip(false)
-    State.SetStatus("BAG_FULL", "Bag capacity reached! Awaiting round end.")
+    FarmEngine._activeTarget = nil
+    State.SetDistance(0)
+    State.SetStatus("BAG_FULL", "Сумка заполнена! Ожидание конца раунда")
 
     if State.Config.SafeSpotOnFull then
         MapManager.TeleportToSafePlatform()
@@ -1212,12 +1691,20 @@ function FarmEngine.Start()
         AntiAFK.Enable()
     end
 
-    if State.Config.Noclip then
-        Movement.SetNoclip(true)
+    -- Initial safety: Do NOT move or noclip until round is confirmed active
+    Movement.Cancel()
+    Movement.SetNoclip(false)
+    MapManager.RecordLobbyWaypoint()
+
+    if MapManager.IsRoundActive() then
+        if State.Config.Noclip then
+            Movement.SetNoclip(true)
+        end
+        State.SetStatus("SCANNING", "Round confirmed! Locating candies...")
+    else
+        State.SetStatus("WAITING_MAP", "Waiting for round to start (in lobby/intermission)...")
     end
 
-    MapManager.RecordLobbyWaypoint()
-    State.SetStatus("SCANNING", "Farm started! Locating targets...")
     FarmEngine.WakeLoop()
 end
 
@@ -1225,7 +1712,7 @@ end
 function FarmEngine.Stop()
     FarmEngine.IsRunning = false
     State.Config.AutoFarm = false
-    FarmEngine._loopToken += 1 -- Invalidate any running loop token
+    FarmEngine._loopToken += 1
 
     Movement.Cancel()
     Movement.SetNoclip(false)
@@ -1235,13 +1722,35 @@ function FarmEngine.Stop()
     State.SetDistance(0)
 end
 
--- The core candy collection loop
+-- The core candy collection loop (Strictly gated by MapManager.IsRoundActive)
 function FarmEngine.RunCollectionLoop(token: number)
     while FarmEngine.IsRunning and token == FarmEngine._loopToken do
+        -- GATE 1: Fail-Closed Round Verification
+        if not MapManager.IsRoundActive() then
+            Movement.Cancel()
+            Movement.SetNoclip(false)
+            FarmEngine._activeTarget = nil
+            State.SetDistance(0)
+
+            local roundState = MapManager.GetRoundState()
+            if roundState == "ENDING" then
+                State.SetStatus("ROUND_OVER", "Round ended! Waiting for intermission...")
+                if State.Config.SafeSpotOnFull then
+                    MapManager.TeleportToSafePlatform()
+                end
+            else
+                State.SetStatus("WAITING_MAP", "Waiting for round to start (in lobby/intermission)...")
+            end
+
+            task.wait(0.5)
+            continue
+        end
+
+        -- GATE 2: Character and RootPart validity
         local char = LocalPlayer.Character
         if not char then
             State.SetStatus("DEAD", "Waiting for character respawn...")
-            task.wait(1.0)
+            task.wait(0.5)
             continue
         end
 
@@ -1249,74 +1758,73 @@ function FarmEngine.RunCollectionLoop(token: number)
         local humanoid = char:FindFirstChildWhichIsA("Humanoid")
         if not hrp or not humanoid or humanoid.Health <= 0 then
             State.SetStatus("DEAD", "Player dead, awaiting respawn...")
-            task.wait(1.0)
+            task.wait(0.5)
             continue
         end
 
-        -- Check Bag Full condition
+        -- GATE 3: Check Bag Full condition
         local effectiveLimit = (State.Config.BagLimit > 0) and State.Config.BagLimit or State.BagCapacity
         if State.CandiesInBag >= effectiveLimit then
             FarmEngine.HandleBagFull()
-            task.wait(2.0)
+            task.wait(1.5)
             continue
         end
 
-        -- Find active map & coin container
+        -- GATE 4: Active Map & CoinContainer existence
         local map, coinContainer = MapManager.FindActiveMap()
         if not map or not coinContainer then
-            State.SetStatus("WAITING_MAP", "Waiting for round map to load...")
-            task.wait(1.0)
+            State.SetStatus("WAITING_MAP", "Map not ready...")
+            task.wait(0.5)
             continue
         end
 
         State.SetMap(map.Name)
 
-        -- Find closest valid candy
-        local targetPart, distance = CandyDetector.GetClosestCandy(coinContainer, hrp.Position, "Candy")
+        -- Enable noclip now that round is 100% active
+        if State.Config.Noclip and not Movement.NoclipEnabled then
+            Movement.SetNoclip(true)
+        end
+
+        -- Find closest valid candy, strictly checking map bounds!
+        local targetPart, distance = CandyDetector.GetClosestCandy(coinContainer, hrp.Position, "Candy", MapManager.IsPositionInsideMap)
         if not targetPart then
-            -- If no specific "Candy" found, try general coins
-            targetPart, distance = CandyDetector.GetClosestCandy(coinContainer, hrp.Position, "All")
+            targetPart, distance = CandyDetector.GetClosestCandy(coinContainer, hrp.Position, "All", MapManager.IsPositionInsideMap)
         end
 
         if not targetPart then
-            State.SetStatus("SCANNING", "No candies currently available; scanning...")
-            task.wait(0.6)
+            State.SetStatus("SCANNING", "Конфеты не найдены, сканирую...")
+            task.wait(0.5)
             continue
         end
 
         FarmEngine._activeTarget = targetPart
         State.SetDistance(distance)
-        State.SetStatus("MOVING", string.format("Moving to candy (%d studs)", math.floor(distance)))
+        State.SetStatus("MOVING", string.format("Движение к конфете (%d м)", math.floor(distance)))
 
-        -- Execute movement towards the target
-        local speed = State.Config.MoveSpeed or 32
-        local method = State.Config.MoveMethod or "Tween"
-        local success = Movement.MoveTo(targetPart.Position, speed, method)
+        -- Execute continuous movement with live round active check
+        local speed = State.Config.MoveSpeed or 28
+        local method = State.Config.MoveMethod or "Continuous"
+        local success, reason = Movement.MoveToAndCollect(
+            targetPart,
+            speed,
+            method,
+            MapManager.IsRoundActive
+        )
 
         if not FarmEngine.IsRunning or token ~= FarmEngine._loopToken then
             break
         end
 
         if success then
-            State.SetStatus("COLLECTING", "Collecting candy...")
-            Movement.TouchTarget(hrp, targetPart)
-
-            -- Short yield for collection replication
-            local waitStart = os.clock()
-            while targetPart.Parent and (os.clock() - waitStart) < 0.3 do
-                task.wait(0.05)
-            end
-
-            -- If coin wasn't destroyed/collected after 0.5s, blacklist it temporarily
-            if targetPart.Parent and (os.clock() - waitStart) >= 0.3 then
-                CandyDetector.BlacklistCoin(targetPart, 10)
-            end
+            State.SetStatus("COLLECTING", "Конфета успешно собрана")
+            FarmEngine.BroadcastMetrics()
         else
-            -- Movement failed or stalled: blacklist coin so bot tries another
-            CandyDetector.BlacklistCoin(targetPart, 12)
+            State.SetStatus("SCANNING", "Конфета недоступна (" .. tostring(reason) .. "), переключаю цель...")
+            CandyDetector.RecordFailedPickup(targetPart, 2)
+            CandyDetector.BlacklistCoin(targetPart, 10)
+            FarmEngine.BroadcastMetrics()
         end
 
-        -- Clean up expired blacklists
         CandyDetector.PruneBlacklist()
         task.wait(0.05)
     end
@@ -1339,11 +1847,581 @@ return FarmEngine
 
         end)()
 
-        -- MODULE 10: Mobile UI (Delta Touch Interface)
+        -- MODULE 10: Native Vector Icon Primitives
+        local IconPrimitives = (function()
+-- IconPrimitives.luau: Native Vector-Style UI Primitives for Roblox
+-- Renders clean geometric icons using Frames, UICorner, UIStroke and Rotation.
+-- Zero external image asset requests. Zero emojis. 100% self-contained.
+
+local IconPrimitives = {}
+
+local function Create(className: string, properties: { [string]: any }, children: { any }?): any
+    local instance = Instance.new(className)
+    for k, v in pairs(properties) do
+        (instance :: any)[k] = v
+    end
+    if children then
+        for _, child in ipairs(children) do
+            child.Parent = instance
+        end
+    end
+    return instance
+end
+
+-- Renders a scalable vector icon into a container Frame
+function IconPrimitives.CreateIcon(iconName: string, size: number, color: Color3?, accentColor: Color3?): Frame
+    local c = color or Color3.fromRGB(220, 220, 230)
+    local ac = accentColor or Color3.fromRGB(168, 85, 247)
+    local s = size or 16
+
+    local container = Create("Frame", {
+        Name = "Icon_" .. iconName,
+        Size = UDim2.new(0, s, 0, s),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ClipsDescendants = false,
+    })
+
+    if iconName == "Candy" then
+        -- Central candy diamond body
+        Create("Frame", {
+            Name = "Body",
+            Size = UDim2.new(0.65, 0, 0.65, 0),
+            Position = UDim2.new(0.175, 0, 0.175, 0),
+            BackgroundColor3 = ac,
+            Rotation = 45,
+            BorderSizePixel = 0,
+            Parent = container,
+        }, {
+            Create("UICorner", { CornerRadius = UDim.new(0.35, 0) }),
+            Create("UIStroke", { Color = Color3.fromRGB(255, 255, 255), Transparency = 0.5, Thickness = 1 }),
+        })
+        -- Left twist
+        Create("Frame", {
+            Name = "TwistL",
+            Size = UDim2.new(0.22, 0, 0.22, 0),
+            Position = UDim2.new(0.02, 0, 0.39, 0),
+            BackgroundColor3 = c,
+            Rotation = 25,
+            BorderSizePixel = 0,
+            Parent = container,
+        }, { Create("UICorner", { CornerRadius = UDim.new(0.5, 0) }) })
+        -- Right twist
+        Create("Frame", {
+            Name = "TwistR",
+            Size = UDim2.new(0.22, 0, 0.22, 0),
+            Position = UDim2.new(0.76, 0, 0.39, 0),
+            BackgroundColor3 = c,
+            Rotation = -25,
+            BorderSizePixel = 0,
+            Parent = container,
+        }, { Create("UICorner", { CornerRadius = UDim.new(0.5, 0) }) })
+
+    elseif iconName == "Start" then
+        -- Clean play triangle made of angled bars
+        local bar1 = Create("Frame", {
+            Size = UDim2.new(0.55, 0, 0.18, 0),
+            Position = UDim2.new(0.25, 0, 0.32, 0),
+            BackgroundColor3 = c,
+            Rotation = 30,
+            BorderSizePixel = 0,
+            Parent = container,
+        }, { Create("UICorner", { CornerRadius = UDim.new(0.5, 0) }) })
+        local bar2 = Create("Frame", {
+            Size = UDim2.new(0.55, 0, 0.18, 0),
+            Position = UDim2.new(0.25, 0, 0.52, 0),
+            BackgroundColor3 = c,
+            Rotation = -30,
+            BorderSizePixel = 0,
+            Parent = container,
+        }, { Create("UICorner", { CornerRadius = UDim.new(0.5, 0) }) })
+        local spine = Create("Frame", {
+            Size = UDim2.new(0.18, 0, 0.65, 0),
+            Position = UDim2.new(0.2, 0, 0.18, 0),
+            BackgroundColor3 = c,
+            BorderSizePixel = 0,
+            Parent = container,
+        }, { Create("UICorner", { CornerRadius = UDim.new(0.5, 0) }) })
+
+    elseif iconName == "Stop" then
+        -- Rounded stop square
+        Create("Frame", {
+            Size = UDim2.new(0.68, 0, 0.68, 0),
+            Position = UDim2.new(0.16, 0, 0.16, 0),
+            BackgroundColor3 = c,
+            BorderSizePixel = 0,
+            Parent = container,
+        }, {
+            Create("UICorner", { CornerRadius = UDim.new(0.22, 0) }),
+        })
+
+    elseif iconName == "Settings" then
+        -- Gear icon
+        for i = 0, 3 do
+            Create("Frame", {
+                Size = UDim2.new(0.85, 0, 0.22, 0),
+                Position = UDim2.new(0.075, 0, 0.39, 0),
+                BackgroundColor3 = c,
+                Rotation = i * 45,
+                BorderSizePixel = 0,
+                Parent = container,
+            }, { Create("UICorner", { CornerRadius = UDim.new(0.3, 0) }) })
+        end
+        Create("Frame", {
+            Size = UDim2.new(0.52, 0, 0.52, 0),
+            Position = UDim2.new(0.24, 0, 0.24, 0),
+            BackgroundColor3 = ac,
+            BorderSizePixel = 0,
+            Parent = container,
+        }, {
+            Create("UICorner", { CornerRadius = UDim.new(1, 0) }),
+        })
+
+    elseif iconName == "Performance" then
+        -- Lightning bolt
+        Create("Frame", {
+            Size = UDim2.new(0.48, 0, 0.18, 0),
+            Position = UDim2.new(0.28, 0, 0.18, 0),
+            BackgroundColor3 = c,
+            Rotation = -35,
+            BorderSizePixel = 0,
+            Parent = container,
+        }, { Create("UICorner", { CornerRadius = UDim.new(0.5, 0) }) })
+        Create("Frame", {
+            Size = UDim2.new(0.48, 0, 0.18, 0),
+            Position = UDim2.new(0.24, 0, 0.62, 0),
+            BackgroundColor3 = c,
+            Rotation = -35,
+            BorderSizePixel = 0,
+            Parent = container,
+        }, { Create("UICorner", { CornerRadius = UDim.new(0.5, 0) }) })
+        Create("Frame", {
+            Size = UDim2.new(0.35, 0, 0.18, 0),
+            Position = UDim2.new(0.32, 0, 0.41, 0),
+            BackgroundColor3 = ac,
+            BorderSizePixel = 0,
+            Parent = container,
+        }, { Create("UICorner", { CornerRadius = UDim.new(0.5, 0) }) })
+
+    elseif iconName == "Zombie" then
+        -- Geometric zombie skull
+        Create("Frame", {
+            Size = UDim2.new(0.72, 0, 0.72, 0),
+            Position = UDim2.new(0.14, 0, 0.14, 0),
+            BackgroundColor3 = Color3.fromRGB(34, 197, 94),
+            BorderSizePixel = 0,
+            Parent = container,
+        }, {
+            Create("UICorner", { CornerRadius = UDim.new(0.3, 0) }),
+        })
+        -- Eyes
+        Create("Frame", {
+            Size = UDim2.new(0.18, 0, 0.18, 0),
+            Position = UDim2.new(0.26, 0, 0.32, 0),
+            BackgroundColor3 = Color3.fromRGB(234, 179, 8),
+            BorderSizePixel = 0,
+            Parent = container,
+        }, { Create("UICorner", { CornerRadius = UDim.new(1, 0) }) })
+        Create("Frame", {
+            Size = UDim2.new(0.18, 0, 0.18, 0),
+            Position = UDim2.new(0.56, 0, 0.32, 0),
+            BackgroundColor3 = Color3.fromRGB(239, 68, 68),
+            BorderSizePixel = 0,
+            Parent = container,
+        }, { Create("UICorner", { CornerRadius = UDim.new(1, 0) }) })
+        -- Mouth stitch
+        Create("Frame", {
+            Size = UDim2.new(0.38, 0, 0.08, 0),
+            Position = UDim2.new(0.31, 0, 0.65, 0),
+            BackgroundColor3 = Color3.fromRGB(15, 23, 42),
+            BorderSizePixel = 0,
+            Parent = container,
+        })
+
+    elseif iconName == "Minimize" then
+        -- Horizontal bar
+        Create("Frame", {
+            Size = UDim2.new(0.65, 0, 0.14, 0),
+            Position = UDim2.new(0.175, 0, 0.43, 0),
+            BackgroundColor3 = c,
+            BorderSizePixel = 0,
+            Parent = container,
+        }, { Create("UICorner", { CornerRadius = UDim.new(0.5, 0) }) })
+
+    elseif iconName == "Close" then
+        -- Diagonal X
+        Create("Frame", {
+            Size = UDim2.new(0.7, 0, 0.14, 0),
+            Position = UDim2.new(0.15, 0, 0.43, 0),
+            BackgroundColor3 = c,
+            Rotation = 45,
+            BorderSizePixel = 0,
+            Parent = container,
+        }, { Create("UICorner", { CornerRadius = UDim.new(0.5, 0) }) })
+        Create("Frame", {
+            Size = UDim2.new(0.7, 0, 0.14, 0),
+            Position = UDim2.new(0.15, 0, 0.43, 0),
+            BackgroundColor3 = c,
+            Rotation = -45,
+            BorderSizePixel = 0,
+            Parent = container,
+        }, { Create("UICorner", { CornerRadius = UDim.new(0.5, 0) }) })
+
+    elseif iconName == "Status" then
+        -- Radar pulse ring + core dot
+        Create("Frame", {
+            Size = UDim2.new(0.76, 0, 0.76, 0),
+            Position = UDim2.new(0.12, 0, 0.12, 0),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Parent = container,
+        }, {
+            Create("UICorner", { CornerRadius = UDim.new(1, 0) }),
+            Create("UIStroke", { Color = c, Thickness = 1.5 }),
+        })
+        Create("Frame", {
+            Size = UDim2.new(0.28, 0, 0.28, 0),
+            Position = UDim2.new(0.36, 0, 0.36, 0),
+            BackgroundColor3 = ac,
+            BorderSizePixel = 0,
+            Parent = container,
+        }, { Create("UICorner", { CornerRadius = UDim.new(1, 0) }) })
+
+    elseif iconName == "Movement" then
+        -- Directional chevron
+        Create("Frame", {
+            Size = UDim2.new(0.48, 0, 0.16, 0),
+            Position = UDim2.new(0.12, 0, 0.42, 0),
+            BackgroundColor3 = c,
+            Rotation = 45,
+            BorderSizePixel = 0,
+            Parent = container,
+        }, { Create("UICorner", { CornerRadius = UDim.new(0.5, 0) }) })
+        Create("Frame", {
+            Size = UDim2.new(0.48, 0, 0.16, 0),
+            Position = UDim2.new(0.40, 0, 0.42, 0),
+            BackgroundColor3 = c,
+            Rotation = -45,
+            BorderSizePixel = 0,
+            Parent = container,
+        }, { Create("UICorner", { CornerRadius = UDim.new(0.5, 0) }) })
+
+    elseif iconName == "Statistics" then
+        -- 3 vertical activity bars
+        Create("Frame", {
+            Size = UDim2.new(0.16, 0, 0.38, 0),
+            Position = UDim2.new(0.18, 0, 0.48, 0),
+            BackgroundColor3 = c,
+            BorderSizePixel = 0,
+            Parent = container,
+        }, { Create("UICorner", { CornerRadius = UDim.new(0.4, 0) }) })
+        Create("Frame", {
+            Size = UDim2.new(0.16, 0, 0.68, 0),
+            Position = UDim2.new(0.42, 0, 0.18, 0),
+            BackgroundColor3 = ac,
+            BorderSizePixel = 0,
+            Parent = container,
+        }, { Create("UICorner", { CornerRadius = UDim.new(0.4, 0) }) })
+        Create("Frame", {
+            Size = UDim2.new(0.16, 0, 0.50, 0),
+            Position = UDim2.new(0.66, 0, 0.36, 0),
+            BackgroundColor3 = c,
+            BorderSizePixel = 0,
+            Parent = container,
+        }, { Create("UICorner", { CornerRadius = UDim.new(0.4, 0) }) })
+
+    elseif iconName == "Refresh" then
+        -- Ring with notch
+        Create("Frame", {
+            Size = UDim2.new(0.72, 0, 0.72, 0),
+            Position = UDim2.new(0.14, 0, 0.14, 0),
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Parent = container,
+        }, {
+            Create("UICorner", { CornerRadius = UDim.new(1, 0) }),
+            Create("UIStroke", { Color = c, Thickness = 1.5 }),
+        })
+        Create("Frame", {
+            Size = UDim2.new(0.24, 0, 0.24, 0),
+            Position = UDim2.new(0.62, 0, 0.10, 0),
+            BackgroundColor3 = ac,
+            BorderSizePixel = 0,
+            Parent = container,
+        }, { Create("UICorner", { CornerRadius = UDim.new(0.3, 0) }) })
+    end
+
+    return container
+end
+
+return IconPrimitives
+
+        end)()
+
+        -- MODULE 11: Zombie & Infection Mode Controller
+        local ZombieMode = (function()
+-- ZombieMode.luau: MM2 Halloween Zombie & Infection Mode Controller (Verified Zero-Remote Architecture)
+-- Detects infected entities, handles gun auto-equip and safe native tool activation,
+-- and provides threat evasion with strict lobby lockout and state isolation from Candy Farm.
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+while not LocalPlayer do
+    task.wait(0.1)
+    LocalPlayer = Players.LocalPlayer
+end
+
+export type ThreatTarget = {
+    Player: Player?,
+    Character: Model,
+    RootPart: BasePart,
+    Humanoid: Humanoid,
+    Distance: number,
+}
+
+local ZombieMode = {
+    IsEnabled = false,
+    IsActiveInRound = false,
+    ZombieCount = 0,
+    StatusMessage = "Ожидание раунда Infection",
+    AutoEquipGun = true,
+    AutoShoot = true,
+    EvasionBuffer = 18.0,
+    _loopToken = 0,
+    _activeThreat = nil :: ThreatTarget?,
+    _updateCallback = nil :: ((data: any) -> ())?,
+}
+
+-- Check if character is an infected player or zombie entity
+local function IsTargetInfected(char: Model): boolean
+    if not char or not char:IsA("Model") then return false end
+    if char == LocalPlayer.Character then return false end
+
+    local hum = char:FindFirstChildWhichIsA("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
+
+    -- Signal 1: Attributes
+    if char:GetAttribute("Zombie") == true or char:GetAttribute("Infected") == true then
+        return true
+    end
+
+    -- Signal 2: Weapon check (Zombie Knife)
+    for _, child in ipairs(char:GetChildren()) do
+        if child:IsA("Tool") and (string.find(child.Name:lower(), "zombie") or string.find(child.Name:lower(), "knife")) then
+            return true
+        end
+    end
+
+    -- Signal 3: Naming
+    local nameLower = char.Name:lower()
+    if string.find(nameLower, "zombie") or string.find(nameLower, "infected") then
+        return true
+    end
+
+    -- Signal 4: Player team in Infection
+    local player = Players:GetPlayerFromCharacter(char)
+    if player then
+        local team = player.Team
+        if team and string.find(team.Name:lower(), "zombie") then
+            return true
+        end
+        if player:GetAttribute("Role") == "Zombie" then
+            return true
+        end
+    end
+
+    return false
+end
+
+-- Scan for active zombie threats inside playable map
+function ZombieMode.ScanNearestThreat(): ThreatTarget?
+    if MapManager.IsPlayerInLobby() or not MapManager.IsRoundActive() then
+        return nil
+    end
+
+    local localChar = LocalPlayer.Character
+    if not localChar then return nil end
+    local localHrp = localChar:FindFirstChild("HumanoidRootPart") :: BasePart?
+    if not localHrp then return nil end
+
+    local nearestThreat: ThreatTarget? = nil
+    local shortestDist = 50.0
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character then
+            local char = player.Character
+            local hrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?
+            local hum = char:FindFirstChildOfClass("Humanoid") :: Humanoid?
+
+            if hrp and hum and hum.Health > 0 and IsTargetInfected(char) then
+                local dist = (hrp.Position - localHrp.Position).Magnitude
+                if dist < shortestDist and MapManager.IsPositionInsideMap(hrp.Position) then
+                    shortestDist = dist
+                    nearestThreat = {
+                        Player = player,
+                        Character = char,
+                        RootPart = hrp,
+                        Humanoid = hum,
+                        Distance = dist,
+                    }
+                end
+            end
+        end
+    end
+
+    return nearestThreat
+end
+
+-- Resolve gun tool from character or backpack
+local function GetEquippedOrBackpackGun(): Tool?
+    local char = LocalPlayer.Character
+    if char then
+        for _, item in ipairs(char:GetChildren()) do
+            if item:IsA("Tool") and string.find(item.Name:lower(), "gun") then
+                return item
+            end
+        end
+    end
+
+    local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+    if backpack then
+        for _, item in ipairs(backpack:GetChildren()) do
+            if item:IsA("Tool") and string.find(item.Name:lower(), "gun") then
+                return item
+            end
+        end
+    end
+
+    return nil
+end
+
+-- Defensive engagement using native Roblox engine methods (zero unverified remotes)
+local function EngageThreat(threat: ThreatTarget)
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hum = char:FindFirstChildWhichIsA("Humanoid")
+    local localHrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?
+    if not hum or not localHrp then return end
+
+    local gunTool = GetEquippedOrBackpackGun()
+    if gunTool then
+        -- 1. Auto-Equip Gun if currently in backpack
+        if gunTool.Parent ~= char and ZombieMode.AutoEquipGun then
+            hum:EquipTool(gunTool)
+            task.wait(0.05)
+        end
+
+        -- 2. Physical Character & Camera Orientation
+        local lookDir = (threat.RootPart.Position - localHrp.Position)
+        local flatLook = Vector3.new(lookDir.X, 0, lookDir.Z).Unit
+        localHrp.CFrame = CFrame.lookAlong(localHrp.Position, flatLook, Vector3.yAxis)
+
+        local camera = Workspace.CurrentCamera
+        if camera then
+            camera.CFrame = CFrame.lookAt(camera.CFrame.Position, threat.RootPart.Position)
+        end
+
+        -- 3. Native Tool Activation (bypasses remote tampering)
+        if ZombieMode.AutoShoot and gunTool.Parent == char then
+            pcall(function()
+                gunTool:Activate()
+            end)
+        end
+
+        ZombieMode.StatusMessage = string.format("Защита: Стрельба по зомби (%d м)", math.floor(threat.Distance))
+    else
+        -- Unarmed Defense: Relocate away from threat
+        if threat.Distance <= ZombieMode.EvasionBuffer then
+            local fleeDir = (localHrp.Position - threat.RootPart.Position).Unit
+            local targetEvade = localHrp.Position + (fleeDir * 16.0)
+            if MapManager.IsPositionInsideMap(targetEvade) then
+                localHrp.CFrame = CFrame.new(targetEvade)
+                localHrp.AssemblyLinearVelocity = Vector3.zero
+            else
+                MapManager.ParkInSafeSpot(char)
+            end
+            ZombieMode.StatusMessage = "Уклонение от зомби! Переход в укрытие"
+        end
+    end
+end
+
+local function RunZombieLoop(token: number)
+    while ZombieMode.IsEnabled and token == ZombieMode._loopToken do
+        task.wait(0.25)
+
+        if MapManager.IsPlayerInLobby() then
+            ZombieMode.IsActiveInRound = false
+            ZombieMode.ZombieCount = 0
+            ZombieMode.StatusMessage = "В лобби (Ожидание раунда Infection)"
+            ZombieMode.Broadcast()
+            continue
+        end
+
+        if not MapManager.IsRoundActive() then
+            ZombieMode.IsActiveInRound = false
+            ZombieMode.ZombieCount = 0
+            ZombieMode.StatusMessage = "Раунд не начался или завершён"
+            ZombieMode.Broadcast()
+            continue
+        end
+
+        local threat = ZombieMode.ScanNearestThreat()
+        if threat then
+            ZombieMode.IsActiveInRound = true
+            ZombieMode.ZombieCount = 1
+            EngageThreat(threat)
+        else
+            ZombieMode.IsActiveInRound = false
+            ZombieMode.ZombieCount = 0
+            ZombieMode.StatusMessage = "Зомби не обнаружены (Стандартный раунд)"
+        end
+
+        ZombieMode.Broadcast()
+    end
+end
+
+function ZombieMode.Broadcast()
+    if ZombieMode._updateCallback then
+        ZombieMode._updateCallback({
+            isEnabled = ZombieMode.IsEnabled,
+            isActive = ZombieMode.IsActiveInRound,
+            zombieCount = ZombieMode.ZombieCount,
+            status = ZombieMode.StatusMessage,
+        })
+    end
+end
+
+function ZombieMode.Init(uiCallback: ((data: any) -> ())?)
+    ZombieMode._updateCallback = uiCallback
+end
+
+function ZombieMode.Start()
+    ZombieMode.IsEnabled = true
+    ZombieMode._loopToken += 1
+    task.spawn(RunZombieLoop, ZombieMode._loopToken)
+    ZombieMode.Broadcast()
+end
+
+function ZombieMode.Stop()
+    ZombieMode.IsEnabled = false
+    ZombieMode._loopToken += 1
+    ZombieMode.IsActiveInRound = false
+    ZombieMode.ZombieCount = 0
+    ZombieMode.StatusMessage = "Модуль Зомби остановлен"
+    ZombieMode.Broadcast()
+end
+
+return ZombieMode
+
+        end)()
+
+        -- MODULE 12: Mobile UI (NEBULA PRO + MIDNIGHT Interface)
         local MobileUI = (function()
--- MobileUI.luau: Premium Delta Android Mobile Interface (Corrected & Hardened)
--- 100% self-contained Luau GUI with touch drag, screen boundary clamping,
--- mini HUD launcher, live metrics, performance toggle, and clean unload.
+-- MobileUI.luau: Premium Russian Mobile Interface (NEBULA PRO + MIDNIGHT Architecture)
+-- Ultra-compact pocket overlay (336 x 260 px), 3 primary tabs (ФАРМ, ЗОМБИ, НАСТРОЙКИ),
+-- 100% native vector icon primitives (zero emojis), boundary clamping, and fail-safe diagnostics.
 
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -1357,23 +2435,23 @@ while not LocalPlayer do
     LocalPlayer = Players.LocalPlayer
 end
 
-local UI_NAME = "MM2_Private_CandyFarm_UI"
+local UI_NAME = "MM2_Private_CandyFarm_RU_UI"
 
 local PALETTE = {
-    BG_MAIN        = Color3.fromRGB(18, 18, 24),     -- #121218
-    BG_CARD        = Color3.fromRGB(26, 26, 36),     -- #1a1a24
-    BG_CONTAINER   = Color3.fromRGB(36, 36, 50),     -- #242432
-    BORDER_SUBTLE  = Color3.fromRGB(50, 50, 68),     -- #323244
-    ACCENT_PURPLE  = Color3.fromRGB(138, 75, 255),   -- #8a4bff
-    ACCENT_MAGENTA = Color3.fromRGB(168, 85, 247),   -- #a855f7
-    STATUS_MINT    = Color3.fromRGB(34, 197, 94),    -- #22c55e (Active / Farming)
-    STATUS_RED     = Color3.fromRGB(239, 68, 68),    -- #ef4444 (Stopped / Bag Full)
-    STATUS_AMBER   = Color3.fromRGB(245, 158, 11),   -- #f59e0b (Waiting / Intermission)
-    STATUS_IDLE    = Color3.fromRGB(148, 163, 184),  -- #94a3b8 (Idle)
+    BG_MAIN        = Color3.fromRGB(13, 10, 22),     -- Глубокий ночной фон
+    BG_CARD        = Color3.fromRGB(22, 17, 36),     -- Темно-фиолетовая карточка
+    BG_CONTAINER   = Color3.fromRGB(32, 25, 52),     -- Колодец контейнера
+    BORDER_STROKE  = Color3.fromRGB(88, 54, 138),    -- Фиолетовая обводка
+    ACCENT_PURPLE  = Color3.fromRGB(147, 51, 234),   -- Яркий фиолетовый акцент
+    ACCENT_MAGENTA = Color3.fromRGB(168, 85, 247),   -- Маджента
+    TAB_INACTIVE   = Color3.fromRGB(24, 19, 40),
+    STATUS_GREEN   = Color3.fromRGB(16, 185, 129),   -- Изумрудный (Активен)
+    STATUS_RED     = Color3.fromRGB(239, 68, 68),    -- Рубиновый (Остановлен / Лимит)
+    STATUS_AMBER   = Color3.fromRGB(245, 158, 11),   -- Янтарный (Ожидание)
     TEXT_WHITE     = Color3.fromRGB(255, 255, 255),
-    TEXT_MUTED     = Color3.fromRGB(148, 163, 184),
-    TEXT_DIM       = Color3.fromRGB(100, 116, 139),
-    PROGRESS_BG    = Color3.fromRGB(30, 30, 42),
+    TEXT_MUTED     = Color3.fromRGB(196, 181, 253),
+    TEXT_DIM       = Color3.fromRGB(139, 128, 175),
+    PROGRESS_BG    = Color3.fromRGB(28, 22, 44),
 }
 
 local FONTS = {
@@ -1382,9 +2460,8 @@ local FONTS = {
     BLACK   = Enum.Font.GothamBlack,
 }
 
--- Safe, robust parent resolver with 3-tier cascade (gethui -> CoreGui -> PlayerGui)
+-- 3-tier safe parent resolver (gethui -> CoreGui in pcall -> PlayerGui)
 local function ResolveGuiParent(screenGui: ScreenGui): (Instance, string)
-    -- 1. Try gethui() if supported by executor
     if type(gethui) == "function" then
         local ok, hui = pcall(gethui)
         if ok and hui then
@@ -1397,7 +2474,6 @@ local function ResolveGuiParent(screenGui: ScreenGui): (Instance, string)
         end
     end
 
-    -- 2. Try CoreGui inside pcall
     local coreOk = pcall(function()
         local core = game:GetService("CoreGui")
         screenGui.Parent = core
@@ -1406,17 +2482,15 @@ local function ResolveGuiParent(screenGui: ScreenGui): (Instance, string)
         return game:GetService("CoreGui"), "CoreGui"
     end
 
-    -- 3. Guaranteed fallback: PlayerGui (Always exists, always renders on Android mobile!)
     local playerGui = LocalPlayer:WaitForChild("PlayerGui", 5) or LocalPlayer:FindFirstChildOfClass("PlayerGui")
     if playerGui then
         screenGui.Parent = playerGui
         return playerGui, "PlayerGui"
     end
 
-    error("Critical: Could not resolve valid GUI parent (gethui, CoreGui, PlayerGui all failed)")
+    error("Critical: Could not resolve valid GUI parent.")
 end
 
--- Safe Instance Builder (Protected against deprecated properties)
 local function Create(className: string, properties: { [string]: any }, children: { Instance }?): Instance
     local inst = Instance.new(className)
     for k, v in pairs(properties or {}) do
@@ -1441,7 +2515,7 @@ local function Tween(inst: Instance, duration: number, properties: { [string]: a
     return tw
 end
 
--- Clamp GUI position within screen viewport so it cannot be dragged off-screen on Android
+-- Clamp GUI within mobile screen bounds
 local function ClampToViewport(targetFrame: GuiObject, goalOffset: Vector2): UDim2
     local camera = Workspace.CurrentCamera
     local viewport = (camera and camera.ViewportSize.X > 50) and camera.ViewportSize or Vector2.new(1280, 720)
@@ -1495,7 +2569,6 @@ local function MakeClampedDraggable(dragHandle: GuiObject, targetFrame: GuiObjec
             local viewport = (camera and camera.ViewportSize.X > 50) and camera.ViewportSize or Vector2.new(1280, 720)
             local currentAbsX = startPos.X.Scale * viewport.X + startPos.X.Offset + delta.X
             local currentAbsY = startPos.Y.Scale * viewport.Y + startPos.Y.Offset + delta.Y
-
             targetFrame.Position = ClampToViewport(targetFrame, Vector2.new(currentAbsX, currentAbsY))
         end
     end)
@@ -1509,86 +2582,81 @@ function MobileUI.Init(userCallbacks: { [string]: any })
     local self = setmetatable({}, MobileUI)
 
     self.IsFarming = false
-    self.CurrentStatus = "IDLE"
+    self.IsZombieMode = false
+    self.CurrentStatus = "Ожидание раунда"
+    self.ActiveTab = "FARM"
     self.Callbacks = userCallbacks
+
     self.Settings = {
-        FarmSpeed = "Fast",
-        BagCapacity = "Auto",
+        FarmSpeed = "Быстрая", -- "Обычная" (28), "Быстрая" (36), "Турбо" (44)
+        BagCapacity = "Авто",
         SafePlatform = true,
         AutoResume = true,
         AntiAFK = true,
         PerfMode = false,
     }
 
-    -- 1. Clean up any previous GUI instances in all possible locations
+    -- 1. Singleton guard
     pcall(function()
-        if type(gethui) == "function" then
-            local hui = gethui()
-            if hui and hui:FindFirstChild(UI_NAME) then hui[UI_NAME]:Destroy() end
-        end
-    end)
-    pcall(function()
-        local core = game:GetService("CoreGui")
-        if core and core:FindFirstChild(UI_NAME) then core[UI_NAME]:Destroy() end
-    end)
-    pcall(function()
-        local pg = LocalPlayer:FindFirstChild("PlayerGui")
-        if pg and pg:FindFirstChild(UI_NAME) then pg[UI_NAME]:Destroy() end
+        local existing = CoreGui:FindFirstChild(UI_NAME) or (LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild(UI_NAME))
+        if existing then existing:Destroy() end
     end)
 
-    -- 2. Instantiate ScreenGui without parent initially
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = UI_NAME
-    screenGui.ResetOnSpawn = false
-    screenGui.IgnoreGuiInset = true
-    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    screenGui.DisplayOrder = 999999
+    -- 2. ScreenGui
+    local screenGui = Create("ScreenGui", {
+        Name = UI_NAME,
+        ResetOnSpawn = false,
+        DisplayOrder = 999990,
+    }) :: ScreenGui
     screenGui.Enabled = true
 
-    -- 3. Resolve parent safely
     local resolvedParent, parentType = ResolveGuiParent(screenGui)
     self.ScreenGui = screenGui
-    print("[Private MM2 Candy Farm] GUI successfully parented to: " .. parentType)
 
-    -- Floating Launcher Pill (Mini HUD when main window is hidden)
+    -- 3. Floating Mini-HUD Capsule
     local floatingPill = Create("Frame", {
         Name = "FloatingLauncher",
-        Size = UDim2.new(0, 126, 0, 36),
-        Position = UDim2.new(0.5, -63, 0, 18),
+        Size = UDim2.new(0, 118, 0, 32),
+        Position = UDim2.new(0.5, -59, 0, 14),
         BackgroundColor3 = PALETTE.BG_MAIN,
         BorderSizePixel = 0,
         Active = true,
         Parent = screenGui,
     }, {
-        Create("UICorner", { CornerRadius = UDim.new(0, 18) }),
+        Create("UICorner", { CornerRadius = UDim.new(0, 16) }),
         Create("UIStroke", {
             Color = PALETTE.ACCENT_PURPLE,
             Thickness = 1.4,
-            Transparency = 0.2,
+            Transparency = 0.15,
         }),
     })
     self.FloatingPill = floatingPill
 
-    local pillStatusDot = Create("Frame", {
+    -- Mini-HUD Custom Vector Icon
+    local pillIcon = IconPrimitives.CreateIcon("Candy", 14, PALETTE.TEXT_WHITE, PALETTE.ACCENT_MAGENTA)
+    pillIcon.Position = UDim2.new(0, 8, 0.5, -7)
+    pillIcon.Parent = floatingPill
+
+    local pillDot = Create("Frame", {
         Name = "StatusDot",
-        Size = UDim2.new(0, 8, 0, 8),
-        Position = UDim2.new(0, 10, 0.5, -4),
-        BackgroundColor3 = PALETTE.STATUS_IDLE,
+        Size = UDim2.new(0, 6, 0, 6),
+        Position = UDim2.new(0, 24, 0.5, -3),
+        BackgroundColor3 = PALETTE.STATUS_AMBER,
         BorderSizePixel = 0,
         Parent = floatingPill,
     }, {
         Create("UICorner", { CornerRadius = UDim.new(1, 0) }),
     })
-    self.PillStatusDot = pillStatusDot
+    self.PillDot = pillDot
 
     local pillLabel = Create("TextLabel", {
-        Name = "Label",
-        Size = UDim2.new(1, -26, 1, 0),
-        Position = UDim2.new(0, 24, 0, 0),
+        Name = "PillLabel",
+        Size = UDim2.new(1, -34, 1, 0),
+        Position = UDim2.new(0, 32, 0, 0),
         BackgroundTransparency = 1,
-        Text = "🍬 0 / 40",
+        Text = "0 / 40",
         Font = FONTS.BOLD,
-        TextSize = 11,
+        TextSize = 10,
         TextColor3 = PALETTE.TEXT_WHITE,
         TextXAlignment = Enum.TextXAlignment.Left,
         Parent = floatingPill,
@@ -1597,11 +2665,11 @@ function MobileUI.Init(userCallbacks: { [string]: any })
 
     MakeClampedDraggable(floatingPill, floatingPill)
 
-    -- Main Window (Compact: 340x260 px)
+    -- 4. Main Window (NEBULA PRO + MIDNIGHT Compactness: 336 x 260 px)
     local mainWindow = Create("Frame", {
         Name = "MainWindow",
-        Size = UDim2.new(0, 340, 0, 260),
-        Position = UDim2.new(0.5, -170, 0.5, -130),
+        Size = UDim2.new(0, 336, 0, 260),
+        Position = UDim2.new(0.5, -168, 0.5, -130),
         BackgroundColor3 = PALETTE.BG_MAIN,
         BorderSizePixel = 0,
         ClipsDescendants = true,
@@ -1609,34 +2677,32 @@ function MobileUI.Init(userCallbacks: { [string]: any })
         Parent = screenGui,
     }, {
         Create("UICorner", { CornerRadius = UDim.new(0, 12) }),
-        Create("UIStroke", { Color = PALETTE.BORDER_SUBTLE, Thickness = 1.2 }),
+        Create("UIStroke", { Color = PALETTE.BORDER_STROKE, Thickness = 1.2 }),
     })
     self.MainWindow = mainWindow
 
-    -- Header Bar
+    -- Header Bar (32 px)
     local header = Create("Frame", {
         Name = "HeaderBar",
-        Size = UDim2.new(1, 0, 0, 34),
+        Size = UDim2.new(1, 0, 0, 32),
         BackgroundColor3 = PALETTE.BG_CARD,
         BorderSizePixel = 0,
         Parent = mainWindow,
     }, {
         Create("UICorner", { CornerRadius = UDim.new(0, 12) }),
-        Create("UIGradient", {
-            Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0, PALETTE.BG_CARD),
-                ColorSequenceKeypoint.new(1, PALETTE.BG_MAIN),
-            }),
-            Rotation = 90,
-        }),
     })
+
+    -- Header Icon
+    local headerIcon = IconPrimitives.CreateIcon("Candy", 16, PALETTE.TEXT_WHITE, PALETTE.ACCENT_MAGENTA)
+    headerIcon.Position = UDim2.new(0, 10, 0.5, -8)
+    headerIcon.Parent = header
 
     local title = Create("TextLabel", {
         Name = "Title",
         Size = UDim2.new(0, 180, 1, 0),
-        Position = UDim2.new(0, 12, 0, 0),
+        Position = UDim2.new(0, 30, 0, 0),
         BackgroundTransparency = 1,
-        Text = "🍬 DELTA CANDY FARM",
+        Text = "MM2 Candy Farm",
         Font = FONTS.BLACK,
         TextSize = 12,
         TextColor3 = PALETTE.TEXT_WHITE,
@@ -1644,78 +2710,56 @@ function MobileUI.Init(userCallbacks: { [string]: any })
         Parent = header,
     })
 
-    local versionBadge = Create("TextLabel", {
-        Name = "Badge",
-        Size = UDim2.new(0, 52, 0, 16),
-        Position = UDim2.new(0, 164, 0.5, -8),
+    -- Minimize Button
+    local minimizeBtn = Create("TextButton", {
+        Name = "MinBtn",
+        Size = UDim2.new(0, 24, 0, 20),
+        Position = UDim2.new(1, -52, 0.5, -10),
         BackgroundColor3 = PALETTE.BG_CONTAINER,
-        Text = "PRO v2.0",
-        Font = FONTS.BOLD,
-        TextSize = 9,
-        TextColor3 = PALETTE.ACCENT_MAGENTA,
+        BorderSizePixel = 0,
+        Text = "",
         Parent = header,
     }, {
         Create("UICorner", { CornerRadius = UDim.new(0, 4) }),
     })
+    local minIcon = IconPrimitives.CreateIcon("Minimize", 12, PALETTE.TEXT_MUTED)
+    minIcon.Position = UDim2.new(0.5, -6, 0.5, -6)
+    minIcon.Parent = minimizeBtn
 
-    local minimizeBtn = Create("TextButton", {
-        Name = "MinBtn",
-        Size = UDim2.new(0, 26, 0, 22),
-        Position = UDim2.new(1, -58, 0.5, -11),
-        BackgroundColor3 = PALETTE.BG_CONTAINER,
-        Text = "—",
-        Font = FONTS.BOLD,
-        TextSize = 11,
-        TextColor3 = PALETTE.TEXT_MUTED,
-        Parent = header,
-    }, {
-        Create("UICorner", { CornerRadius = UDim.new(0, 6) }),
-    })
-
+    -- Close Button
     local closeBtn = Create("TextButton", {
         Name = "CloseBtn",
-        Size = UDim2.new(0, 26, 0, 22),
-        Position = UDim2.new(1, -28, 0.5, -11),
-        BackgroundColor3 = Color3.fromRGB(44, 24, 28),
-        Text = "✕",
-        Font = FONTS.BOLD,
-        TextSize = 11,
-        TextColor3 = PALETTE.STATUS_RED,
+        Size = UDim2.new(0, 24, 0, 20),
+        Position = UDim2.new(1, -26, 0.5, -10),
+        BackgroundColor3 = Color3.fromRGB(60, 20, 30),
+        BorderSizePixel = 0,
+        Text = "",
         Parent = header,
     }, {
-        Create("UICorner", { CornerRadius = UDim.new(0, 6) }),
+        Create("UICorner", { CornerRadius = UDim.new(0, 4) }),
     })
+    local closeIcon = IconPrimitives.CreateIcon("Close", 12, Color3.fromRGB(248, 113, 113))
+    closeIcon.Position = UDim2.new(0.5, -6, 0.5, -6)
+    closeIcon.Parent = closeBtn
 
     MakeClampedDraggable(header, mainWindow)
 
-    -- Toggle Main Window visibility
+    -- Toggle Window visibility
     local function ToggleMainWindow()
-        if mainWindow.Visible then
-            Tween(mainWindow, 0.16, { Size = UDim2.new(0, 310, 0, 235), BackgroundTransparency = 0.5 })
-            task.delay(0.16, function()
-                mainWindow.Visible = false
-                mainWindow.Size = UDim2.new(0, 340, 0, 260)
-                mainWindow.BackgroundTransparency = 0
-            end)
-        else
-            mainWindow.Visible = true
-            mainWindow.Size = UDim2.new(0, 310, 0, 235)
-            mainWindow.BackgroundTransparency = 0.4
-            Tween(mainWindow, 0.16, { Size = UDim2.new(0, 340, 0, 260), BackgroundTransparency = 0 })
-        end
+        mainWindow.Visible = not mainWindow.Visible
     end
-
     minimizeBtn.MouseButton1Click:Connect(ToggleMainWindow)
     closeBtn.MouseButton1Click:Connect(ToggleMainWindow)
 
     floatingPill.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            local startTime = tick()
-            local endedConn
-            endedConn = input.Changed:Connect(function()
+            local startPos = input.Position
+            local conn
+            conn = input.Changed:Connect(function()
                 if input.UserInputState == Enum.UserInputState.End then
-                    endedConn:Disconnect()
-                    if (tick() - startTime) < 0.22 then
+                    conn:Disconnect()
+                    local dist = (input.Position - startPos).Magnitude
+                    if dist < 5 then
                         ToggleMainWindow()
                     end
                 end
@@ -1723,221 +2767,292 @@ function MobileUI.Init(userCallbacks: { [string]: any })
         end
     end)
 
-    -- Navigation Bar (Dashboard & Settings)
+    -- 5. Three-Tab Selector Bar (26 px)
     local tabBar = Create("Frame", {
         Name = "TabBar",
         Size = UDim2.new(1, -16, 0, 26),
-        Position = UDim2.new(0, 8, 0, 38),
-        BackgroundColor3 = PALETTE.BG_CARD,
+        Position = UDim2.new(0, 8, 0, 36),
+        BackgroundColor3 = PALETTE.BG_CONTAINER,
         BorderSizePixel = 0,
         Parent = mainWindow,
     }, {
-        Create("UICorner", { CornerRadius = UDim.new(0, 8) }),
-        Create("UIStroke", { Color = PALETTE.BORDER_SUBTLE, Thickness = 1 }),
-    })
-
-    local tabDashBtn = Create("TextButton", {
-        Name = "TabDash",
-        Size = UDim2.new(0.5, -2, 1, -4),
-        Position = UDim2.new(0, 2, 0, 2),
-        BackgroundColor3 = PALETTE.ACCENT_PURPLE,
-        Text = "📊 Dashboard",
-        Font = FONTS.BOLD,
-        TextSize = 11,
-        TextColor3 = PALETTE.TEXT_WHITE,
-        Parent = tabBar,
-    }, {
         Create("UICorner", { CornerRadius = UDim.new(0, 6) }),
     })
 
-    local tabSettingsBtn = Create("TextButton", {
-        Name = "TabSettings",
-        Size = UDim2.new(0.5, -2, 1, -4),
-        Position = UDim2.new(0.5, 0, 0, 2),
-        BackgroundColor3 = Color3.fromRGB(0, 0, 0),
-        BackgroundTransparency = 1,
-        Text = "⚙ Settings",
-        Font = FONTS.BOLD,
-        TextSize = 11,
-        TextColor3 = PALETTE.TEXT_MUTED,
-        Parent = tabBar,
-    }, {
-        Create("UICorner", { CornerRadius = UDim.new(0, 6) }),
-    })
+    local tabButtons = {}
+    local tabPages = {}
 
-    local pagesContainer = Create("Frame", {
-        Name = "Pages",
-        Size = UDim2.new(1, -16, 1, -74),
-        Position = UDim2.new(0, 8, 0, 68),
+    local function CreateTabButton(name: string, label: string, iconType: string, xPosScale: number, widthScale: number)
+        local btn = Create("TextButton", {
+            Name = "Tab_" .. name,
+            Size = UDim2.new(widthScale, -2, 1, -2),
+            Position = UDim2.new(xPosScale, 1, 0, 1),
+            BackgroundColor3 = (name == "FARM") and PALETTE.BG_CARD or Color3.fromRGB(0, 0, 0),
+            BackgroundTransparency = (name == "FARM") and 0 or 1,
+            BorderSizePixel = 0,
+            Text = "  " .. label,
+            Font = FONTS.BOLD,
+            TextSize = 10,
+            TextColor3 = (name == "FARM") and PALETTE.TEXT_WHITE or PALETTE.TEXT_DIM,
+            Parent = tabBar,
+        }, {
+            Create("UICorner", { CornerRadius = UDim.new(0, 5) }),
+        })
+
+        local tabIcon = IconPrimitives.CreateIcon(iconType, 12, (name == "FARM") and PALETTE.ACCENT_MAGENTA or PALETTE.TEXT_DIM)
+        tabIcon.Position = UDim2.new(0, 6, 0.5, -6)
+        tabIcon.Parent = btn
+
+        tabButtons[name] = { btn = btn, icon = tabIcon }
+        return btn
+    end
+
+    CreateTabButton("FARM", "ФАРМ", "Candy", 0, 0.333)
+    CreateTabButton("ZOMBIE", "ЗОМБИ", "Zombie", 0.333, 0.333)
+    CreateTabButton("SETTINGS", "НАСТРОЙКИ", "Settings", 0.666, 0.334)
+
+    -- Container for Tab Pages
+    local contentArea = Create("Frame", {
+        Name = "ContentArea",
+        Size = UDim2.new(1, -16, 1, -70),
+        Position = UDim2.new(0, 8, 0, 66),
         BackgroundTransparency = 1,
+        BorderSizePixel = 0,
         Parent = mainWindow,
     })
 
-    -- PAGE 1: DASHBOARD
-    local dashPage = Create("Frame", {
-        Name = "DashboardPage",
+    local function SwitchTab(tabName: string)
+        self.ActiveTab = tabName
+        for name, page in pairs(tabPages) do
+            page.Visible = (name == tabName)
+        end
+        for name, entry in pairs(tabButtons) do
+            local isActive = (name == tabName)
+            entry.btn.BackgroundColor3 = isActive and PALETTE.BG_CARD or Color3.fromRGB(0, 0, 0)
+            entry.btn.BackgroundTransparency = isActive and 0 or 1
+            entry.btn.TextColor3 = isActive and PALETTE.TEXT_WHITE or PALETTE.TEXT_DIM
+            local iconBody = entry.icon:FindFirstChildWhichIsA("Frame")
+            if iconBody then
+                iconBody.BackgroundColor3 = isActive and PALETTE.ACCENT_MAGENTA or PALETTE.TEXT_DIM
+            end
+        end
+    end
+
+    tabButtons["FARM"].btn.MouseButton1Click:Connect(function() SwitchTab("FARM") end)
+    tabButtons["ZOMBIE"].btn.MouseButton1Click:Connect(function() SwitchTab("ZOMBIE") end)
+    tabButtons["SETTINGS"].btn.MouseButton1Click:Connect(function() SwitchTab("SETTINGS") end)
+
+    -- =========================================================================
+    -- TAB 1: ФАРМ (Core Farm Dashboard)
+    -- =========================================================================
+    local pageFarm = Create("Frame", {
+        Name = "Page_Farm",
         Size = UDim2.new(1, 0, 1, 0),
         BackgroundTransparency = 1,
-        Visible = true,
-        Parent = pagesContainer,
+        Parent = contentArea,
     })
+    tabPages["FARM"] = pageFarm
 
-    -- Status Card
+    -- Status Bar Card (36 px)
     local statusCard = Create("Frame", {
         Name = "StatusCard",
-        Size = UDim2.new(1, 0, 0, 32),
-        Position = UDim2.new(0, 0, 0, 0),
+        Size = UDim2.new(1, 0, 0, 36),
         BackgroundColor3 = PALETTE.BG_CARD,
         BorderSizePixel = 0,
-        Parent = dashPage,
+        Parent = pageFarm,
     }, {
         Create("UICorner", { CornerRadius = UDim.new(0, 8) }),
-        Create("UIStroke", { Color = PALETTE.BORDER_SUBTLE, Thickness = 1 }),
+        Create("UIStroke", { Color = PALETTE.BORDER_STROKE, Thickness = 1 }),
     })
 
     local statusDot = Create("Frame", {
-        Name = "StatusDot",
+        Name = "Dot",
         Size = UDim2.new(0, 8, 0, 8),
-        Position = UDim2.new(0, 10, 0.5, -4),
-        BackgroundColor3 = PALETTE.STATUS_IDLE,
+        Position = UDim2.new(0, 10, 0, 8),
+        BackgroundColor3 = PALETTE.STATUS_AMBER,
         BorderSizePixel = 0,
         Parent = statusCard,
-    }, {
-        Create("UICorner", { CornerRadius = UDim.new(1, 0) }),
-    })
+    }, { Create("UICorner", { CornerRadius = UDim.new(1, 0) }) })
     self.StatusDot = statusDot
 
-    local statusText = Create("TextLabel", {
-        Name = "StatusText",
-        Size = UDim2.new(0, 130, 1, 0),
-        Position = UDim2.new(0, 24, 0, 0),
+    local statusTitle = Create("TextLabel", {
+        Name = "Title",
+        Size = UDim2.new(1, -26, 0, 14),
+        Position = UDim2.new(0, 24, 0, 5),
         BackgroundTransparency = 1,
-        Text = "IDLE (READY)",
+        Text = "Статус: Ожидание раунда",
         Font = FONTS.BOLD,
         TextSize = 10,
-        TextColor3 = PALETTE.STATUS_IDLE,
+        TextColor3 = PALETTE.STATUS_AMBER,
         TextXAlignment = Enum.TextXAlignment.Left,
         Parent = statusCard,
     })
-    self.StatusText = statusText
+    self.StatusTitle = statusTitle
 
-    local subInfoText = Create("TextLabel", {
-        Name = "SubInfo",
-        Size = UDim2.new(1, -165, 1, 0),
-        Position = UDim2.new(0, 155, 0, 0),
+    local statusDiag = Create("TextLabel", {
+        Name = "Diag",
+        Size = UDim2.new(1, -26, 0, 12),
+        Position = UDim2.new(0, 24, 0, 19),
         BackgroundTransparency = 1,
-        Text = "Map: Lobby | Target: —",
+        Text = "В лобби, ожидание начала раунда...",
         Font = FONTS.REGULAR,
-        TextSize = 9.5,
-        TextColor3 = PALETTE.TEXT_MUTED,
-        TextXAlignment = Enum.TextXAlignment.Right,
+        TextSize = 8.5,
+        TextColor3 = PALETTE.TEXT_DIM,
+        TextXAlignment = Enum.TextXAlignment.Left,
         Parent = statusCard,
     })
-    self.SubInfoText = subInfoText
+    self.StatusDiag = statusDiag
 
-    -- Metric Grid (2x2)
-    local metricGrid = Create("Frame", {
-        Name = "MetricGrid",
-        Size = UDim2.new(1, 0, 0, 96),
-        Position = UDim2.new(0, 0, 0, 36),
+    -- Candy Bag Progress Card (48 px)
+    local bagCard = Create("Frame", {
+        Name = "BagCard",
+        Size = UDim2.new(1, 0, 0, 48),
+        Position = UDim2.new(0, 0, 0, 42),
+        BackgroundColor3 = PALETTE.BG_CARD,
+        BorderSizePixel = 0,
+        Parent = pageFarm,
+    }, {
+        Create("UICorner", { CornerRadius = UDim.new(0, 8) }),
+        Create("UIStroke", { Color = PALETTE.BORDER_STROKE, Thickness = 1 }),
+    })
+
+    local bagTitle = Create("TextLabel", {
+        Size = UDim2.new(0, 120, 0, 14),
+        Position = UDim2.new(0, 10, 0, 6),
         BackgroundTransparency = 1,
-        Parent = dashPage,
+        Text = "КОНФЕТЫ В СУМКЕ",
+        Font = FONTS.BOLD,
+        TextSize = 9,
+        TextColor3 = PALETTE.TEXT_MUTED,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Parent = bagCard,
     })
 
-    local function CreateMetricCard(name: string, label: string, initialVal: string, posX: number, posY: number)
-        local card = Create("Frame", {
-            Name = name,
-            Size = UDim2.new(0.5, -4, 0, 45),
-            Position = UDim2.new(posX, 0, posY, 0),
-            BackgroundColor3 = PALETTE.BG_CARD,
-            BorderSizePixel = 0,
-            Parent = metricGrid,
-        }, {
-            Create("UICorner", { CornerRadius = UDim.new(0, 8) }),
-            Create("UIStroke", { Color = PALETTE.BORDER_SUBTLE, Thickness = 1 }),
-        })
-
-        local caption = Create("TextLabel", {
-            Name = "Caption",
-            Size = UDim2.new(1, -12, 0, 14),
-            Position = UDim2.new(0, 8, 0, 4),
-            BackgroundTransparency = 1,
-            Text = label,
-            Font = FONTS.REGULAR,
-            TextSize = 9,
-            TextColor3 = PALETTE.TEXT_MUTED,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            Parent = card,
-        })
-
-        local val = Create("TextLabel", {
-            Name = "Val",
-            Size = UDim2.new(1, -12, 0, 20),
-            Position = UDim2.new(0, 8, 0, 18),
-            BackgroundTransparency = 1,
-            Text = initialVal,
-            Font = FONTS.BOLD,
-            TextSize = 13,
-            TextColor3 = PALETTE.TEXT_WHITE,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            Parent = card,
-        })
-
-        return card, val
-    end
-
-    local cardBag, valBag = CreateMetricCard("CardBag", "BAG CAPACITY", "0 / 40", 0, 0)
-    local cardTotal, valTotal = CreateMetricCard("CardTotal", "SESSION HARVEST", "0 🍬", 0.5, 0)
-    local cardRounds, valRounds = CreateMetricCard("CardRounds", "ROUNDS FARMED", "0", 0, 0.52)
-    local cardTime, valTime = CreateMetricCard("CardTime", "SESSION DURATION", "00:00:00", 0.5, 0.52)
-
-    self.ValBag = valBag
-    self.ValTotal = valTotal
-    self.ValRounds = valRounds
-    self.ValTime = valTime
-
-    local bagProgressBg = Create("Frame", {
-        Name = "ProgressBg",
-        Size = UDim2.new(1, -16, 0, 3),
-        Position = UDim2.new(0, 8, 1, -5),
-        BackgroundColor3 = PALETTE.PROGRESS_BG,
-        BorderSizePixel = 0,
-        Parent = cardBag,
-    }, {
-        Create("UICorner", { CornerRadius = UDim.new(1, 0) }),
-    })
-
-    local bagProgressFill = Create("Frame", {
-        Name = "ProgressFill",
-        Size = UDim2.new(0, 0, 1, 0),
-        BackgroundColor3 = PALETTE.ACCENT_PURPLE,
-        BorderSizePixel = 0,
-        Parent = bagProgressBg,
-    }, {
-        Create("UICorner", { CornerRadius = UDim.new(1, 0) }),
-    })
-    self.BagProgressFill = bagProgressFill
-
-    -- Primary CTA Button
-    local primaryBtn = Create("TextButton", {
-        Name = "PrimaryActionButton",
-        Size = UDim2.new(1, 0, 0, 38),
-        Position = UDim2.new(0, 0, 1, -40),
-        BackgroundColor3 = PALETTE.STATUS_MINT,
-        Text = "▶  START FARMING",
+    local valBag = Create("TextLabel", {
+        Name = "ValBag",
+        Size = UDim2.new(0, 120, 0, 18),
+        Position = UDim2.new(1, -130, 0, 4),
+        BackgroundTransparency = 1,
+        Text = "0 / 40",
         Font = FONTS.BLACK,
         TextSize = 13,
         TextColor3 = PALETTE.TEXT_WHITE,
-        Parent = dashPage,
+        TextXAlignment = Enum.TextXAlignment.Right,
+        Parent = bagCard,
+    })
+    self.ValBag = valBag
+
+    local progressTrack = Create("Frame", {
+        Name = "Track",
+        Size = UDim2.new(1, -20, 0, 8),
+        Position = UDim2.new(0, 10, 0, 28),
+        BackgroundColor3 = PALETTE.PROGRESS_BG,
+        BorderSizePixel = 0,
+        Parent = bagCard,
+    }, {
+        Create("UICorner", { CornerRadius = UDim.new(1, 0) }),
+    })
+
+    local progressFill = Create("Frame", {
+        Name = "Fill",
+        Size = UDim2.new(0, 0, 1, 0),
+        BackgroundColor3 = PALETTE.ACCENT_PURPLE,
+        BorderSizePixel = 0,
+        Parent = progressTrack,
+    }, {
+        Create("UICorner", { CornerRadius = UDim.new(1, 0) }),
+    })
+    self.BagProgressFill = progressFill
+
+    -- Metric Chips Row (30 px)
+    local chipsRow = Create("Frame", {
+        Name = "ChipsRow",
+        Size = UDim2.new(1, 0, 0, 30),
+        Position = UDim2.new(0, 0, 0, 96),
+        BackgroundTransparency = 1,
+        Parent = pageFarm,
+    })
+
+    local chipCollected = Create("Frame", {
+        Size = UDim2.new(0.5, -4, 1, 0),
+        Position = UDim2.new(0, 0, 0, 0),
+        BackgroundColor3 = PALETTE.BG_CARD,
+        BorderSizePixel = 0,
+        Parent = chipsRow,
+    }, {
+        Create("UICorner", { CornerRadius = UDim.new(0, 6) }),
+        Create("UIStroke", { Color = PALETTE.BORDER_STROKE, Thickness = 0.8 }),
+    })
+
+    local valCollected = Create("TextLabel", {
+        Name = "ValCollected",
+        Size = UDim2.new(1, -12, 1, 0),
+        Position = UDim2.new(0, 6, 0, 0),
+        BackgroundTransparency = 1,
+        Text = "Собрано: 0",
+        Font = FONTS.BOLD,
+        TextSize = 9.5,
+        TextColor3 = PALETTE.TEXT_WHITE,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Parent = chipCollected,
+    })
+    self.ValCollected = valCollected
+
+    local chipRound = Create("Frame", {
+        Size = UDim2.new(0.5, -4, 1, 0),
+        Position = UDim2.new(0.5, 4, 0, 0),
+        BackgroundColor3 = PALETTE.BG_CARD,
+        BorderSizePixel = 0,
+        Parent = chipsRow,
+    }, {
+        Create("UICorner", { CornerRadius = UDim.new(0, 6) }),
+        Create("UIStroke", { Color = PALETTE.BORDER_STROKE, Thickness = 0.8 }),
+    })
+
+    local valRound = Create("TextLabel", {
+        Name = "ValRound",
+        Size = UDim2.new(1, -12, 1, 0),
+        Position = UDim2.new(0, 6, 0, 0),
+        BackgroundTransparency = 1,
+        Text = "Раунд: Не начался",
+        Font = FONTS.BOLD,
+        TextSize = 9.5,
+        TextColor3 = PALETTE.TEXT_MUTED,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Parent = chipRound,
+    })
+    self.ValRound = valRound
+
+    -- Target & Speed Telemetry (18 px)
+    local targetLabel = Create("TextLabel", {
+        Name = "TargetTelemetry",
+        Size = UDim2.new(1, 0, 0, 16),
+        Position = UDim2.new(0, 0, 0, 130),
+        BackgroundTransparency = 1,
+        Text = "Скорость: 36 ст/с • Дистанция цели: 0 м",
+        Font = FONTS.REGULAR,
+        TextSize = 8.5,
+        TextColor3 = PALETTE.TEXT_DIM,
+        TextXAlignment = Enum.TextXAlignment.Center,
+        Parent = pageFarm,
+    })
+    self.TargetTelemetry = targetLabel
+
+    -- Primary Farm Start/Stop Button (38 px)
+    local primaryBtn = Create("TextButton", {
+        Name = "PrimaryBtn",
+        Size = UDim2.new(1, 0, 0, 36),
+        Position = UDim2.new(0, 0, 1, -38),
+        BackgroundColor3 = PALETTE.STATUS_GREEN,
+        BorderSizePixel = 0,
+        Text = "НАЧАТЬ ФАРМ",
+        Font = FONTS.BLACK,
+        TextSize = 12,
+        TextColor3 = PALETTE.TEXT_WHITE,
+        Parent = pageFarm,
     }, {
         Create("UICorner", { CornerRadius = UDim.new(0, 8) }),
-        Create("UIGradient", {
-            Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0, Color3.fromRGB(34, 197, 94)),
-                ColorSequenceKeypoint.new(1, Color3.fromRGB(16, 145, 68)),
-            }),
-            Rotation = 45,
-        }),
+        Create("UIStroke", { Color = Color3.fromRGB(52, 211, 153), Thickness = 1.2 }),
     })
     self.PrimaryBtn = primaryBtn
 
@@ -1945,126 +3060,202 @@ function MobileUI.Init(userCallbacks: { [string]: any })
         self:ToggleFarming()
     end)
 
-    -- PAGE 2: SETTINGS
-    local settingsPage = Create("ScrollingFrame", {
-        Name = "SettingsPage",
+    -- =========================================================================
+    -- TAB 2: ЗОМБИ (Dedicated MM2 Zombie & Infection Mode)
+    -- =========================================================================
+    local pageZombie = Create("Frame", {
+        Name = "Page_Zombie",
         Size = UDim2.new(1, 0, 1, 0),
         BackgroundTransparency = 1,
-        ScrollBarThickness = 2,
-        ScrollBarImageColor3 = PALETTE.ACCENT_PURPLE,
-        CanvasSize = UDim2.new(0, 0, 0, 230),
         Visible = false,
-        Parent = pagesContainer,
+        Parent = contentArea,
+    })
+    tabPages["ZOMBIE"] = pageZombie
+
+    local zombieStatusCard = Create("Frame", {
+        Size = UDim2.new(1, 0, 0, 44),
+        BackgroundColor3 = PALETTE.BG_CARD,
+        BorderSizePixel = 0,
+        Parent = pageZombie,
+    }, {
+        Create("UICorner", { CornerRadius = UDim.new(0, 8) }),
+        Create("UIStroke", { Color = PALETTE.BORDER_STROKE, Thickness = 1 }),
     })
 
-    local function CreateSegmentedRow(yPos: number, titleText: string, options: { string }, currentOpt: string, onSelect)
+    local zDot = Create("Frame", {
+        Size = UDim2.new(0, 8, 0, 8),
+        Position = UDim2.new(0, 10, 0, 10),
+        BackgroundColor3 = Color3.fromRGB(34, 197, 94),
+        BorderSizePixel = 0,
+        Parent = zombieStatusCard,
+    }, { Create("UICorner", { CornerRadius = UDim.new(1, 0) }) })
+
+    local zombieTitle = Create("TextLabel", {
+        Name = "ZombieTitle",
+        Size = UDim2.new(1, -26, 0, 14),
+        Position = UDim2.new(0, 24, 0, 7),
+        BackgroundTransparency = 1,
+        Text = "РЕЖИМ ЗОМБИ / INFECTION",
+        Font = FONTS.BOLD,
+        TextSize = 9.5,
+        TextColor3 = Color3.fromRGB(74, 222, 128),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Parent = zombieStatusCard,
+    })
+
+    local zombieDiag = Create("TextLabel", {
+        Name = "ZombieDiag",
+        Size = UDim2.new(1, -26, 0, 14),
+        Position = UDim2.new(0, 24, 0, 23),
+        BackgroundTransparency = 1,
+        Text = "Ожидание раунда Infection / Хэллоуин",
+        Font = FONTS.REGULAR,
+        TextSize = 8.5,
+        TextColor3 = PALETTE.TEXT_DIM,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Parent = zombieStatusCard,
+    })
+    self.ZombieDiag = zombieDiag
+
+    -- Zombie Counter Card
+    local zombieCountCard = Create("Frame", {
+        Size = UDim2.new(1, 0, 0, 42),
+        Position = UDim2.new(0, 0, 0, 50),
+        BackgroundColor3 = PALETTE.BG_CARD,
+        BorderSizePixel = 0,
+        Parent = pageZombie,
+    }, {
+        Create("UICorner", { CornerRadius = UDim.new(0, 8) }),
+        Create("UIStroke", { Color = PALETTE.BORDER_STROKE, Thickness = 1 }),
+    })
+
+    local zCountLabel = Create("TextLabel", {
+        Size = UDim2.new(0.6, 0, 1, 0),
+        Position = UDim2.new(0, 10, 0, 0),
+        BackgroundTransparency = 1,
+        Text = "Зомби обнаружено:",
+        Font = FONTS.BOLD,
+        TextSize = 10,
+        TextColor3 = PALETTE.TEXT_MUTED,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Parent = zombieCountCard,
+    })
+
+    local valZombieCount = Create("TextLabel", {
+        Name = "ValZombieCount",
+        Size = UDim2.new(0.35, 0, 1, 0),
+        Position = UDim2.new(0.65, -10, 0, 0),
+        BackgroundTransparency = 1,
+        Text = "0",
+        Font = FONTS.BLACK,
+        TextSize = 14,
+        TextColor3 = Color3.fromRGB(74, 222, 128),
+        TextXAlignment = Enum.TextXAlignment.Right,
+        Parent = zombieCountCard,
+    })
+    self.ValZombieCount = valZombieCount
+
+    -- Diagnostic Note
+    local zombieNote = Create("TextLabel", {
+        Size = UDim2.new(1, 0, 0, 34),
+        Position = UDim2.new(0, 0, 0, 98),
+        BackgroundTransparency = 1,
+        Text = "Модуль изолирован от сбора конфет. Уклонение и авто-прицел активируются строго в раундах с зомби.",
+        Font = FONTS.REGULAR,
+        TextSize = 8,
+        TextColor3 = PALETTE.TEXT_DIM,
+        TextWrapped = true,
+        Parent = pageZombie,
+    })
+
+    -- Toggle Zombie Action Button
+    local zombieBtn = Create("TextButton", {
+        Name = "ZombieBtn",
+        Size = UDim2.new(1, 0, 0, 36),
+        Position = UDim2.new(0, 0, 1, -38),
+        BackgroundColor3 = PALETTE.BG_CONTAINER,
+        BorderSizePixel = 0,
+        Text = "ВКЛЮЧИТЬ МОДУЛЬ ЗОМБИ",
+        Font = FONTS.BOLD,
+        TextSize = 11,
+        TextColor3 = PALETTE.TEXT_WHITE,
+        Parent = pageZombie,
+    }, {
+        Create("UICorner", { CornerRadius = UDim.new(0, 8) }),
+        Create("UIStroke", { Color = Color3.fromRGB(34, 197, 94), Thickness = 1 }),
+    })
+    self.ZombieBtn = zombieBtn
+
+    zombieBtn.MouseButton1Click:Connect(function()
+        self.IsZombieMode = not self.IsZombieMode
+        if self.IsZombieMode then
+            zombieBtn.Text = "ОТКЛЮЧИТЬ МОДУЛЬ ЗОМБИ"
+            zombieBtn.BackgroundColor3 = Color3.fromRGB(185, 28, 28)
+        else
+            zombieBtn.Text = "ВКЛЮЧИТЬ МОДУЛЬ ЗОМБИ"
+            zombieBtn.BackgroundColor3 = PALETTE.BG_CONTAINER
+        end
+        if self.Callbacks.OnToggleZombie then
+            self.Callbacks.OnToggleZombie(self.IsZombieMode)
+        end
+    end)
+
+    -- =========================================================================
+    -- TAB 3: НАСТРОЙКИ (Settings & High FPS Controller)
+    -- =========================================================================
+    local pageSettings = Create("ScrollingFrame", {
+        Name = "Page_Settings",
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ScrollBarThickness = 3,
+        ScrollBarImageColor3 = PALETTE.ACCENT_PURPLE,
+        CanvasSize = UDim2.new(0, 0, 0, 240),
+        Visible = false,
+        Parent = contentArea,
+    })
+    tabPages["SETTINGS"] = pageSettings
+
+    -- High FPS Mode Toggle Row
+    local function CreateToggleItem(yPos: number, titleText: string, defaultVal: boolean, onToggle: (boolean) -> ()): Frame
         local row = Create("Frame", {
-            Size = UDim2.new(1, -4, 0, 28),
+            Size = UDim2.new(1, 0, 0, 30),
             Position = UDim2.new(0, 0, 0, yPos),
             BackgroundColor3 = PALETTE.BG_CARD,
             BorderSizePixel = 0,
-            Parent = settingsPage,
+            Parent = pageSettings,
         }, {
             Create("UICorner", { CornerRadius = UDim.new(0, 6) }),
-            Create("UIStroke", { Color = PALETTE.BORDER_SUBTLE, Thickness = 1 }),
+            Create("UIStroke", { Color = PALETTE.BORDER_STROKE, Thickness = 0.8 }),
         })
 
-        local label = Create("TextLabel", {
-            Size = UDim2.new(0, 95, 1, 0),
-            Position = UDim2.new(0, 8, 0, 0),
+        local lbl = Create("TextLabel", {
+            Size = UDim2.new(1, -50, 1, 0),
+            Position = UDim2.new(0, 10, 0, 0),
             BackgroundTransparency = 1,
             Text = titleText,
             Font = FONTS.BOLD,
-            TextSize = 10,
-            TextColor3 = PALETTE.TEXT_MUTED,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            Parent = row,
-        })
-
-        local btnContainer = Create("Frame", {
-            Size = UDim2.new(1, -105, 1, -6),
-            Position = UDim2.new(0, 100, 0, 3),
-            BackgroundTransparency = 1,
-            Parent = row,
-        })
-
-        local buttons = {}
-        local count = #options
-        local widthPerBtn = 1 / count
-
-        for i, opt in ipairs(options) do
-            local btn = Create("TextButton", {
-                Name = opt,
-                Size = UDim2.new(widthPerBtn, -2, 1, 0),
-                Position = UDim2.new((i - 1) * widthPerBtn, 1, 0, 0),
-                BackgroundColor3 = (opt == currentOpt) and PALETTE.ACCENT_PURPLE or PALETTE.BG_CONTAINER,
-                Text = opt,
-                Font = FONTS.BOLD,
-                TextSize = 9.5,
-                TextColor3 = (opt == currentOpt) and PALETTE.TEXT_WHITE or PALETTE.TEXT_MUTED,
-                Parent = btnContainer,
-            }, {
-                Create("UICorner", { CornerRadius = UDim.new(0, 4) }),
-            })
-
-            btn.MouseButton1Click:Connect(function()
-                for _, otherBtn in pairs(buttons) do
-                    Tween(otherBtn, 0.15, { BackgroundColor3 = PALETTE.BG_CONTAINER, TextColor3 = PALETTE.TEXT_MUTED })
-                end
-                Tween(btn, 0.15, { BackgroundColor3 = PALETTE.ACCENT_PURPLE, TextColor3 = PALETTE.TEXT_WHITE })
-                onSelect(opt)
-            end)
-            buttons[opt] = btn
-        end
-
-        return row
-    end
-
-    local function CreateToggleRow(yPos: number, labelText: string, defaultVal: boolean, onToggle)
-        local row = Create("Frame", {
-            Size = UDim2.new(1, -4, 0, 28),
-            Position = UDim2.new(0, 0, 0, yPos),
-            BackgroundColor3 = PALETTE.BG_CARD,
-            BorderSizePixel = 0,
-            Parent = settingsPage,
-        }, {
-            Create("UICorner", { CornerRadius = UDim.new(0, 6) }),
-            Create("UIStroke", { Color = PALETTE.BORDER_SUBTLE, Thickness = 1 }),
-        })
-
-        local label = Create("TextLabel", {
-            Size = UDim2.new(1, -55, 1, 0),
-            Position = UDim2.new(0, 8, 0, 0),
-            BackgroundTransparency = 1,
-            Text = labelText,
-            Font = FONTS.BOLD,
-            TextSize = 10,
-            TextColor3 = PALETTE.TEXT_MUTED,
+            TextSize = 9.5,
+            TextColor3 = PALETTE.TEXT_WHITE,
             TextXAlignment = Enum.TextXAlignment.Left,
             Parent = row,
         })
 
         local switch = Create("Frame", {
-            Name = "Switch",
-            Size = UDim2.new(0, 36, 0, 18),
-            Position = UDim2.new(1, -44, 0.5, -9),
-            BackgroundColor3 = defaultVal and PALETTE.STATUS_MINT or PALETTE.BG_CONTAINER,
+            Size = UDim2.new(0, 32, 0, 16),
+            Position = UDim2.new(1, -40, 0.5, -8),
+            BackgroundColor3 = defaultVal and PALETTE.STATUS_GREEN or PALETTE.BG_CONTAINER,
             BorderSizePixel = 0,
             Parent = row,
-        }, {
-            Create("UICorner", { CornerRadius = UDim.new(1, 0) }),
-        })
+        }, { Create("UICorner", { CornerRadius = UDim.new(1, 0) }) })
 
         local knob = Create("Frame", {
-            Name = "Knob",
-            Size = UDim2.new(0, 14, 0, 14),
-            Position = defaultVal and UDim2.new(1, -16, 0.5, -7) or UDim2.new(0, 2, 0.5, -7),
+            Size = UDim2.new(0, 12, 0, 12),
+            Position = defaultVal and UDim2.new(1, -14, 0.5, -6) or UDim2.new(0, 2, 0.5, -6),
             BackgroundColor3 = PALETTE.TEXT_WHITE,
             BorderSizePixel = 0,
             Parent = switch,
-        }, {
-            Create("UICorner", { CornerRadius = UDim.new(1, 0) }),
-        })
+        }, { Create("UICorner", { CornerRadius = UDim.new(1, 0) }) })
 
         local clickBtn = Create("TextButton", {
             Size = UDim2.new(1, 0, 1, 0),
@@ -2077,11 +3268,11 @@ function MobileUI.Init(userCallbacks: { [string]: any })
         clickBtn.MouseButton1Click:Connect(function()
             state = not state
             if state then
-                Tween(switch, 0.15, { BackgroundColor3 = PALETTE.STATUS_MINT })
-                Tween(knob, 0.15, { Position = UDim2.new(1, -16, 0.5, -7) })
+                Tween(switch, 0.15, { BackgroundColor3 = PALETTE.STATUS_GREEN })
+                Tween(knob, 0.15, { Position = UDim2.new(1, -14, 0.5, -6) })
             else
                 Tween(switch, 0.15, { BackgroundColor3 = PALETTE.BG_CONTAINER })
-                Tween(knob, 0.15, { Position = UDim2.new(0, 2, 0.5, -7) })
+                Tween(knob, 0.15, { Position = UDim2.new(0, 2, 0.5, -6) })
             end
             onToggle(state)
         end)
@@ -2089,83 +3280,135 @@ function MobileUI.Init(userCallbacks: { [string]: any })
         return row
     end
 
-    CreateSegmentedRow(0, "Farm Speed", { "Normal", "Fast", "Instant" }, self.Settings.FarmSpeed, function(val)
-        self.Settings.FarmSpeed = val
-        if self.Callbacks.OnSpeedChanged then self.Callbacks.OnSpeedChanged(val) end
-    end)
-
-    CreateSegmentedRow(32, "Bag Target", { "Auto", "40", "50" }, self.Settings.BagCapacity, function(val)
-        self.Settings.BagCapacity = val
-        if self.Callbacks.OnBagCapacityChanged then self.Callbacks.OnBagCapacityChanged(val) end
-    end)
-
-    CreateToggleRow(64, "Safe Spot (Void Platform on Full)", self.Settings.SafePlatform, function(val)
-        self.Settings.SafePlatform = val
-        if self.Callbacks.OnSafePlatformChanged then self.Callbacks.OnSafePlatformChanged(val) end
-    end)
-
-    CreateToggleRow(96, "Auto-Resume on Respawn", self.Settings.AutoResume, function(val)
-        self.Settings.AutoResume = val
-        if self.Callbacks.OnAutoResumeChanged then self.Callbacks.OnAutoResumeChanged(val) end
-    end)
-
-    CreateToggleRow(128, "Anti-AFK Protection", self.Settings.AntiAFK, function(val)
-        self.Settings.AntiAFK = val
-        if self.Callbacks.OnAntiAFKChanged then self.Callbacks.OnAntiAFKChanged(val) end
-    end)
-
-    CreateToggleRow(160, "Performance Mode (Low-End FPS)", self.Settings.PerfMode, function(val)
+    CreateToggleItem(0, "ВЫСОКИЙ FPS (Бустер графики)", self.Settings.PerfMode, function(val)
         self.Settings.PerfMode = val
         if self.Callbacks.OnPerfModeChanged then self.Callbacks.OnPerfModeChanged(val) end
     end)
 
-    -- Clean Unload Button in Settings
-    local unloadBtn = Create("TextButton", {
-        Name = "UnloadBtn",
-        Size = UDim2.new(1, -4, 0, 28),
-        Position = UDim2.new(0, 0, 0, 194),
-        BackgroundColor3 = Color3.fromRGB(50, 24, 28),
-        Text = "🛑 Clean Unload & Exit Script",
-        Font = FONTS.BOLD,
-        TextSize = 10,
-        TextColor3 = PALETTE.STATUS_RED,
-        Parent = settingsPage,
+    -- Speed Mode Selector Row
+    local speedRow = Create("Frame", {
+        Size = UDim2.new(1, 0, 0, 42),
+        Position = UDim2.new(0, 0, 0, 34),
+        BackgroundColor3 = PALETTE.BG_CARD,
+        BorderSizePixel = 0,
+        Parent = pageSettings,
     }, {
         Create("UICorner", { CornerRadius = UDim.new(0, 6) }),
-        Create("UIStroke", { Color = Color3.fromRGB(100, 30, 35), Thickness = 1 }),
+        Create("UIStroke", { Color = PALETTE.BORDER_STROKE, Thickness = 0.8 }),
+    })
+
+    local speedLabel = Create("TextLabel", {
+        Size = UDim2.new(1, -20, 0, 14),
+        Position = UDim2.new(0, 10, 0, 4),
+        BackgroundTransparency = 1,
+        Text = "Скорость движения (непрерывно)",
+        Font = FONTS.BOLD,
+        TextSize = 9,
+        TextColor3 = PALETTE.TEXT_MUTED,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Parent = speedRow,
+    })
+
+    local speedButtons = {}
+    local speedModes = { "Обычная", "Быстрая", "Турбо" }
+    for i, modeName in ipairs(speedModes) do
+        local btn = Create("TextButton", {
+            Size = UDim2.new(0.31, 0, 0, 18),
+            Position = UDim2.new((i - 1) * 0.34, 4, 0, 20),
+            BackgroundColor3 = (self.Settings.FarmSpeed == modeName) and PALETTE.ACCENT_PURPLE or PALETTE.BG_CONTAINER,
+            BorderSizePixel = 0,
+            Text = modeName,
+            Font = FONTS.BOLD,
+            TextSize = 9,
+            TextColor3 = PALETTE.TEXT_WHITE,
+            Parent = speedRow,
+        }, { Create("UICorner", { CornerRadius = UDim.new(0, 4) }) })
+
+        speedButtons[modeName] = btn
+        btn.MouseButton1Click:Connect(function()
+            self.Settings.FarmSpeed = modeName
+            for k, b in pairs(speedButtons) do
+                b.BackgroundColor3 = (k == modeName) and PALETTE.ACCENT_PURPLE or PALETTE.BG_CONTAINER
+            end
+            if self.Callbacks.OnSpeedChanged then
+                self.Callbacks.OnSpeedChanged(modeName)
+            end
+        end)
+    end
+
+    CreateToggleItem(80, "Безопасное укрытие", self.Settings.SafePlatform, function(val)
+        self.Settings.SafePlatform = val
+        if self.Callbacks.OnSafePlatformChanged then self.Callbacks.OnSafePlatformChanged(val) end
+    end)
+
+    CreateToggleItem(114, "Авто-возобновление", self.Settings.AutoResume, function(val)
+        self.Settings.AutoResume = val
+        if self.Callbacks.OnAutoResumeChanged then self.Callbacks.OnAutoResumeChanged(val) end
+    end)
+
+    CreateToggleItem(148, "Защита Anti-AFK", self.Settings.AntiAFK, function(val)
+        self.Settings.AntiAFK = val
+        if self.Callbacks.OnAntiAFKChanged then self.Callbacks.OnAntiAFKChanged(val) end
+    end)
+
+    -- Telemetry Row
+    local fpsLabel = Create("TextLabel", {
+        Name = "FpsTelemetry",
+        Size = UDim2.new(1, 0, 0, 16),
+        Position = UDim2.new(0, 0, 0, 182),
+        BackgroundTransparency = 1,
+        Text = "Частота: 60.0 FPS • Задержка: 16.6 мс",
+        Font = FONTS.REGULAR,
+        TextSize = 8.5,
+        TextColor3 = PALETTE.TEXT_DIM,
+        TextXAlignment = Enum.TextXAlignment.Center,
+        Parent = pageSettings,
+    })
+    self.FpsTelemetry = fpsLabel
+
+    -- Unload & Reset Action Row
+    local unloadBtn = Create("TextButton", {
+        Name = "UnloadBtn",
+        Size = UDim2.new(0.48, 0, 0, 26),
+        Position = UDim2.new(0, 0, 0, 204),
+        BackgroundColor3 = Color3.fromRGB(60, 20, 25),
+        BorderSizePixel = 0,
+        Text = "Выгрузить скрипт",
+        Font = FONTS.BOLD,
+        TextSize = 9.5,
+        TextColor3 = Color3.fromRGB(255, 140, 140),
+        Parent = pageSettings,
+    }, {
+        Create("UICorner", { CornerRadius = UDim.new(0, 6) }),
+        Create("UIStroke", { Color = Color3.fromRGB(150, 40, 50), Thickness = 1 }),
     })
 
     unloadBtn.MouseButton1Click:Connect(function()
         if self.Callbacks.OnUnload then
             self.Callbacks.OnUnload()
-        else
-            self:Destroy()
         end
     end)
 
-    -- Tab Switching
-    tabDashBtn.MouseButton1Click:Connect(function()
-        tabDashBtn.BackgroundColor3 = PALETTE.ACCENT_PURPLE
-        tabDashBtn.BackgroundTransparency = 0
-        tabDashBtn.TextColor3 = PALETTE.TEXT_WHITE
+    local resetBtn = Create("TextButton", {
+        Name = "ResetBtn",
+        Size = UDim2.new(0.48, 0, 0, 26),
+        Position = UDim2.new(0.52, 0, 0, 204),
+        BackgroundColor3 = PALETTE.BG_CARD,
+        BorderSizePixel = 0,
+        Text = "Сбросить опции",
+        Font = FONTS.BOLD,
+        TextSize = 9.5,
+        TextColor3 = PALETTE.TEXT_MUTED,
+        Parent = pageSettings,
+    }, {
+        Create("UICorner", { CornerRadius = UDim.new(0, 6) }),
+        Create("UIStroke", { Color = PALETTE.BORDER_STROKE, Thickness = 1 }),
+    })
 
-        tabSettingsBtn.BackgroundTransparency = 1
-        tabSettingsBtn.TextColor3 = PALETTE.TEXT_MUTED
-
-        dashPage.Visible = true
-        settingsPage.Visible = false
-    end)
-
-    tabSettingsBtn.MouseButton1Click:Connect(function()
-        tabSettingsBtn.BackgroundColor3 = PALETTE.ACCENT_PURPLE
-        tabSettingsBtn.BackgroundTransparency = 0
-        tabSettingsBtn.TextColor3 = PALETTE.TEXT_WHITE
-
-        tabDashBtn.BackgroundTransparency = 1
-        tabDashBtn.TextColor3 = PALETTE.TEXT_MUTED
-
-        settingsPage.Visible = true
-        dashPage.Visible = false
+    resetBtn.MouseButton1Click:Connect(function()
+        if self.Callbacks.OnResetSettings then
+            self.Callbacks.OnResetSettings()
+        end
     end)
 
     return self
@@ -2175,27 +3418,13 @@ function MobileUI:ToggleFarming()
     self.IsFarming = not self.IsFarming
 
     if self.IsFarming then
-        self.PrimaryBtn.Text = "⏹  STOP FARMING"
+        self.PrimaryBtn.Text = "ОСТАНОВИТЬ ФАРМ"
         self.PrimaryBtn.BackgroundColor3 = PALETTE.STATUS_RED
-        local grad = self.PrimaryBtn:FindFirstChildOfClass("UIGradient")
-        if grad then
-            grad.Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0, Color3.fromRGB(239, 68, 68)),
-                ColorSequenceKeypoint.new(1, Color3.fromRGB(185, 28, 28)),
-            })
-        end
-        self:SetStatus("FARMING", "Traversing candies...")
+        self:SetStatus("Сбор конфет", "Поиск и непрерывное движение к цели...")
     else
-        self.PrimaryBtn.Text = "▶  START FARMING"
-        self.PrimaryBtn.BackgroundColor3 = PALETTE.STATUS_MINT
-        local grad = self.PrimaryBtn:FindFirstChildOfClass("UIGradient")
-        if grad then
-            grad.Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0, Color3.fromRGB(34, 197, 94)),
-                ColorSequenceKeypoint.new(1, Color3.fromRGB(16, 145, 68)),
-            })
-        end
-        self:SetStatus("IDLE", "Farm stopped by user")
+        self.PrimaryBtn.Text = "НАЧАТЬ ФАРМ"
+        self.PrimaryBtn.BackgroundColor3 = PALETTE.STATUS_GREEN
+        self:SetStatus("Ожидание раунда", "Фарм остановлен пользователем")
     end
 
     if self.Callbacks.OnToggleFarm then
@@ -2203,34 +3432,30 @@ function MobileUI:ToggleFarming()
     end
 end
 
-function MobileUI:SetStatus(statusKey: string, subInfo: string?)
-    self.CurrentStatus = statusKey
+-- Update Status & Diagnostic in Russian
+function MobileUI:SetStatus(statusTitleText: string, diagnosticMessage: string?)
+    self.CurrentStatus = statusTitleText
 
-    local color = PALETTE.STATUS_IDLE
-    local title = "IDLE (READY)"
+    local dotColor = PALETTE.STATUS_AMBER
 
-    if statusKey == "FARMING" or statusKey == "MOVING" or statusKey == "COLLECTING" then
-        color = PALETTE.STATUS_MINT
-        title = "FARMING CANDIES"
-    elseif statusKey == "BAG_FULL" then
-        color = PALETTE.STATUS_RED
-        title = "BAG FULL (40/40)"
-    elseif statusKey == "ROUND_OVER" then
-        color = PALETTE.STATUS_AMBER
-        title = "ROUND OVER"
-    elseif statusKey == "WAITING_MAP" then
-        color = PALETTE.ACCENT_MAGENTA
-        title = "WAITING FOR MAP"
+    if statusTitleText == "Сбор конфет" or statusTitleText == "Собираю конфеты" or statusTitleText == "Поиск конфет" then
+        dotColor = PALETTE.STATUS_GREEN
+    elseif statusTitleText == "Сумка заполнена" or statusTitleText == "Ошибка" or statusTitleText == "Конфета не подобрана" then
+        dotColor = PALETTE.STATUS_RED
+    elseif statusTitleText == "Раунд завершён" or statusTitleText == "Ожидание следующего раунда" then
+        dotColor = PALETTE.STATUS_AMBER
     end
 
-    if self.StatusDot then self.StatusDot.BackgroundColor3 = color end
-    if self.PillStatusDot then self.PillStatusDot.BackgroundColor3 = color end
-    if self.StatusText then
-        self.StatusText.Text = title
-        self.StatusText.TextColor3 = color
+    if self.StatusDot then self.StatusDot.BackgroundColor3 = dotColor end
+    if self.PillDot then self.PillDot.BackgroundColor3 = dotColor end
+
+    if self.StatusTitle then
+        self.StatusTitle.Text = "Статус: " .. statusTitleText
+        self.StatusTitle.TextColor3 = dotColor
     end
-    if subInfo and self.SubInfoText then
-        self.SubInfoText.Text = subInfo
+
+    if diagnosticMessage and self.StatusDiag then
+        self.StatusDiag.Text = diagnosticMessage
     end
 end
 
@@ -2238,22 +3463,20 @@ function MobileUI:UpdateMetrics(metrics: {
     bagCurrent: number?,
     bagMax: number?,
     totalCandies: number?,
-    roundsFarmed: number?,
-    elapsedSeconds: number?,
-    mapName: string?,
+    roundName: string?,
     targetDistance: number?,
-    cpm: number?,
+    fps: number?,
 })
     if not metrics then return end
 
     if metrics.bagCurrent ~= nil and metrics.bagMax ~= nil then
         self.ValBag.Text = string.format("%d / %d", metrics.bagCurrent, metrics.bagMax)
         if self.PillLabel then
-            self.PillLabel.Text = string.format("🍬 %d / %d", metrics.bagCurrent, metrics.bagMax)
+            self.PillLabel.Text = string.format("%d / %d", metrics.bagCurrent, metrics.bagMax)
         end
 
         local progress = math.clamp(metrics.bagCurrent / math.max(metrics.bagMax, 1), 0, 1)
-        Tween(self.BagProgressFill, 0.2, { Size = UDim2.new(progress, 0, 1, 0) })
+        Tween(self.BagProgressFill, 0.15, { Size = UDim2.new(progress, 0, 1, 0) })
         if progress >= 1 then
             self.BagProgressFill.BackgroundColor3 = PALETTE.STATUS_RED
         else
@@ -2262,24 +3485,36 @@ function MobileUI:UpdateMetrics(metrics: {
     end
 
     if metrics.totalCandies ~= nil then
-        self.ValTotal.Text = string.format("%d 🍬", metrics.totalCandies)
+        self.ValCollected.Text = string.format("Собрано: %d", metrics.totalCandies)
     end
 
-    if metrics.roundsFarmed ~= nil then
-        self.ValRounds.Text = tostring(metrics.roundsFarmed)
+    if metrics.roundName ~= nil then
+        self.ValRound.Text = "Раунд: " .. metrics.roundName
     end
 
-    if metrics.elapsedSeconds ~= nil then
-        local hours = math.floor(metrics.elapsedSeconds / 3600)
-        local mins = math.floor((metrics.elapsedSeconds % 3600) / 60)
-        local secs = math.floor(metrics.elapsedSeconds % 60)
-        self.ValTime.Text = string.format("%02d:%02d:%02d", hours, mins, secs)
+    if metrics.targetDistance ~= nil then
+        local spd = self.Settings.FarmSpeed
+        self.TargetTelemetry.Text = string.format("Скорость: %s • Дистанция: %d м", spd, math.floor(metrics.targetDistance))
     end
 
-    if metrics.mapName or metrics.targetDistance then
-        local mapStr = metrics.mapName or "Unknown"
-        local distStr = metrics.targetDistance and string.format("%d studs", math.floor(metrics.targetDistance)) or "—"
-        self.SubInfoText.Text = string.format("Map: %s | Dist: %s", mapStr, distStr)
+    if metrics.fps ~= nil and self.FpsTelemetry then
+        local frameMs = (metrics.fps > 0) and (1000 / metrics.fps) or 16.6
+        self.FpsTelemetry.Text = string.format("Частота: %.1f FPS • Задержка: %.1f мс", metrics.fps, frameMs)
+    end
+end
+
+function MobileUI:UpdateZombieMetrics(zombieData: {
+    isEnabled: boolean?,
+    isActive: boolean?,
+    zombieCount: number?,
+    status: string?,
+})
+    if not zombieData then return end
+    if zombieData.zombieCount ~= nil and self.ValZombieCount then
+        self.ValZombieCount.Text = tostring(zombieData.zombieCount)
+    end
+    if zombieData.status ~= nil and self.ZombieDiag then
+        self.ZombieDiag.Text = zombieData.status
     end
 end
 
@@ -2301,6 +3536,7 @@ return MobileUI
 
         local function HandleUnload()
             FarmEngine.Destroy()
+            ZombieMode.Stop()
             if UI then
                 UI:Destroy()
                 UI = nil
@@ -2312,11 +3548,11 @@ return MobileUI
         _G.PrivateMM2CandyFarmCleanup = HandleUnload
 
         local function ResolveSpeed(mode)
-            if mode == "Normal" then return 28
-            elseif mode == "Fast" then return 38
-            elseif mode == "Instant" then return 80
+            if mode == "Обычная" or mode == "Normal" then return 28
+            elseif mode == "Быстрая" or mode == "Fast" then return 36
+            elseif mode == "Турбо" or mode == "Turbo" or mode == "Instant" then return 44
             end
-            return 32
+            return 36
         end
 
         UI = MobileUI.Init({
@@ -2328,10 +3564,18 @@ return MobileUI
                 end
             end,
 
+            OnToggleZombie = function(enabled)
+                if enabled then
+                    ZombieMode.Start()
+                else
+                    ZombieMode.Stop()
+                end
+            end,
+
             OnSpeedChanged = function(mode)
                 local speed = ResolveSpeed(mode)
                 State.SetConfig("MoveSpeed", speed)
-                State.SetConfig("MoveMethod", (mode == "Instant") and "Instant" or "Tween")
+                State.SetConfig("MoveMethod", "Continuous")
                 Persistence.Save(State.Config)
             end,
 
@@ -2365,6 +3609,20 @@ return MobileUI
                 Performance.SetPerformanceMode(enabled)
             end,
 
+            OnResetSettings = function()
+                State.Config = {
+                    AutoFarm = false,
+                    MoveSpeed = 36,
+                    MoveMethod = "Continuous",
+                    BagLimit = 0,
+                    AutoResumeOnRespawn = true,
+                    SafeSpotOnFull = true,
+                    AntiAFK = true,
+                    Noclip = true,
+                }
+                Persistence.Save(State.Config)
+            end,
+
             OnUnload = function()
                 HandleUnload()
             end,
@@ -2373,11 +3631,19 @@ return MobileUI
         FarmEngine.Init(function(metrics)
             if UI then
                 UI:UpdateMetrics(metrics)
-                UI:SetStatus(State.Status, State.StatusMessage)
+                local title = metrics.statusTitle or State.GetRussianStatusTitle()
+                local diag = metrics.diagnosticMessage or State.StatusMessage
+                UI:SetStatus(title, diag)
             end
         end)
 
-        print("[Private MM2 Candy Farm] Running! Touch the floating candy pill or dashboard to control.")
+        ZombieMode.Init(function(data)
+            if UI then
+                UI:UpdateZombieMetrics(data)
+            end
+        end)
+
+        print("[Private MM2 Candy Farm] Running! Touch floating pill or dashboard to control.")
     end)
 
     if not initSuccess then
@@ -2412,7 +3678,7 @@ return MobileUI
                 errTitle.Size = UDim2.new(1, -16, 0, 24)
                 errTitle.Position = UDim2.new(0, 8, 0, 6)
                 errTitle.BackgroundTransparency = 1
-                errTitle.Text = "❌ MM2 FARM STARTUP ERROR"
+                errTitle.Text = "MM2 FARM STARTUP ERROR"
                 errTitle.Font = Enum.Font.GothamBold
                 errTitle.TextSize = 12
                 errTitle.TextColor3 = Color3.fromRGB(239, 68, 68)

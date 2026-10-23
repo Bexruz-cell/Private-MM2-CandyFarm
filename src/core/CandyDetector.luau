@@ -1,13 +1,14 @@
 --!strict
--- CandyDetector.luau: High-Performance MM2 Candy & Coin Detection
--- Finds collectible seasonal candies, sorts by distance, and maintains blacklists
+-- CandyDetector.luau: Validated MM2 Candy Detection & Boundary Guard
+-- Validates targets against map boundaries, active TouchInterest, and collection state
 
 local CandyDetector = {
-    Blacklist = {} :: { [Instance]: number }, -- [coinInstance] = expiryTimestamp
-    CoinTypeFilter = "Candy",                  -- Target event currency ("Candy", "Coin", or "All")
+    Blacklist = {} :: { [Instance]: number },
+    CoinTypeFilter = "Candy",
+    FailCounts = {} :: { [Instance]: number },
 }
 
--- Check if an instance is a valid, active collectible candy
+-- Check if an instance is a valid, currently collectible candy
 function CandyDetector.IsValidCandy(obj: Instance, coinTypeFilter: string?): boolean
     if not obj or not obj.Parent then return false end
     if not (obj:IsA("BasePart") or obj:IsA("Model")) then return false end
@@ -21,7 +22,6 @@ function CandyDetector.IsValidCandy(obj: Instance, coinTypeFilter: string?): boo
     -- 1. Check for TouchInterest / TouchTransmitter
     local touchInterest = obj:FindFirstChildWhichIsA("TouchTransmitter") or obj:FindFirstChild("TouchInterest")
     if not touchInterest then
-        -- In some versions TouchInterest is inside a child part
         local innerTouch = obj:FindFirstChild("CoinVisual") and obj.CoinVisual:FindFirstChildWhichIsA("TouchTransmitter")
         if not innerTouch then
             return false
@@ -46,7 +46,7 @@ function CandyDetector.IsValidCandy(obj: Instance, coinTypeFilter: string?): boo
     return true
 end
 
--- Resolve the BasePart position of a candy target
+-- Resolve the BasePart target of a candy
 function CandyDetector.GetTargetPart(candy: Instance): BasePart?
     if candy:IsA("BasePart") then
         return candy
@@ -56,17 +56,36 @@ function CandyDetector.GetTargetPart(candy: Instance): BasePart?
     return nil
 end
 
--- Find all currently valid candies in the active container
-function CandyDetector.GetCandies(coinContainer: Instance?, coinTypeFilter: string?): { BasePart }
+-- Find all currently valid candies inside map boundaries
+function CandyDetector.GetCandies(
+    coinContainer: Instance?,
+    filterOrBoundaryFn: (string | ((Vector3) -> boolean))?,
+    boundaryFn: ((Vector3) -> boolean)?
+): { BasePart }
     local result = {}
     if not coinContainer then return result end
 
-    local filter = coinTypeFilter or CandyDetector.CoinTypeFilter
+    local filter: string? = nil
+    local isPositionValidFn: ((Vector3) -> boolean)? = nil
+
+    if typeof(filterOrBoundaryFn) == "string" then
+        filter = filterOrBoundaryFn
+        isPositionValidFn = boundaryFn
+    elseif typeof(filterOrBoundaryFn) == "function" then
+        isPositionValidFn = filterOrBoundaryFn
+    end
+
+    local activeFilter = filter or CandyDetector.CoinTypeFilter
+
     for _, item in ipairs(coinContainer:GetChildren()) do
-        if CandyDetector.IsValidCandy(item, filter) then
+        if CandyDetector.IsValidCandy(item, activeFilter) then
             local part = CandyDetector.GetTargetPart(item)
             if part then
-                table.insert(result, part)
+                -- Spatial boundary validation: Reject any coin outside the map
+                local isValidPos = (not isPositionValidFn) or isPositionValidFn(part.Position)
+                if isValidPos then
+                    table.insert(result, part)
+                end
             end
         end
     end
@@ -74,9 +93,14 @@ function CandyDetector.GetCandies(coinContainer: Instance?, coinTypeFilter: stri
     return result
 end
 
--- Find the closest valid candy using squared distance (O(1) sqrt-free)
-function CandyDetector.GetClosestCandy(coinContainer: Instance?, playerPos: Vector3, coinTypeFilter: string?): (BasePart?, number)
-    local candidates = CandyDetector.GetCandies(coinContainer, coinTypeFilter)
+-- Find the closest valid candy using squared distance
+function CandyDetector.GetClosestCandy(
+    coinContainer: Instance?,
+    playerPos: Vector3,
+    filterOrBoundaryFn: (string | ((Vector3) -> boolean))?,
+    boundaryFn: ((Vector3) -> boolean)?
+): (BasePart?, number)
+    local candidates = CandyDetector.GetCandies(coinContainer, filterOrBoundaryFn, boundaryFn)
     if #candidates == 0 then
         return nil, math.huge
     end
@@ -97,24 +121,38 @@ function CandyDetector.GetClosestCandy(coinContainer: Instance?, playerPos: Vect
     return bestPart, realDist
 end
 
--- Temporarily blacklist a coin that caused a timeout or stall
+-- Register a failed pickup attempt; blacklists if failed repeatedly
+function CandyDetector.RecordFailedPickup(coin: Instance, maxRetries: number?): boolean
+    local limit = maxRetries or 2
+    local count = (CandyDetector.FailCounts[coin] or 0) + 1
+    CandyDetector.FailCounts[coin] = count
+
+    if count >= limit then
+        CandyDetector.Blacklist[coin] = os.clock() + 15 -- Blacklist for 15s
+        CandyDetector.FailCounts[coin] = nil
+        return true -- Triggered permanent blacklist for this cycle
+    end
+    return false
+end
+
 function CandyDetector.BlacklistCoin(coin: Instance, durationSeconds: number?)
-    local duration = durationSeconds or 12
+    local duration = durationSeconds or 15
     CandyDetector.Blacklist[coin] = os.clock() + duration
 end
 
--- Clear expired blacklists to free memory
 function CandyDetector.PruneBlacklist()
     local now = os.clock()
     for coin, expiry in pairs(CandyDetector.Blacklist) do
         if now >= expiry or not coin.Parent then
             CandyDetector.Blacklist[coin] = nil
+            CandyDetector.FailCounts[coin] = nil
         end
     end
 end
 
 function CandyDetector.ClearBlacklist()
     table.clear(CandyDetector.Blacklist)
+    table.clear(CandyDetector.FailCounts)
 end
 
 return CandyDetector
